@@ -54,7 +54,7 @@
     "@vitest/coverage-v8": "^4.1.9",
     "axe-core": "^4.13.0",
     "eslint": "^8",
-    "eslint-config-next": "14.2.35",
+    "eslint-config-next": "16.4.0",
     "jsdom": "^29.1.1",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
