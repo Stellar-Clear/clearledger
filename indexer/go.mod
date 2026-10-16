@@ -12,7 +12,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/joho/godotenv v1.5.1
 	github.com/prometheus/client_golang v1.24.1
-	github.com/stellar/go-stellar-sdk v0.6.0
+	github.com/stellar/go-stellar-sdk v0.7.3
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -29,7 +29,7 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
-	github.com/stellar/go-xdr v0.0.0-20260529210834-0bf8f4956364 // indirect
+	github.com/stellar/go-xdr v0.0.0-20260806060815-dc590f17552a // indirect
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

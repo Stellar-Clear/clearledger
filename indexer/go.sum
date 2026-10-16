@@ -73,10 +73,10 @@ github.com/segmentio/go-loggly v0.5.1-0.20171222203950-eb91657e62b2 h1:S4OC0+OBK
 github.com/segmentio/go-loggly v0.5.1-0.20171222203950-eb91657e62b2/go.mod h1:8zLRYR5npGjaOXgPSKat5+oOh+UHd8OdbS18iqX9F6Y=
 github.com/sirupsen/logrus v1.9.3 h1:dueUQJ1C2q9oE3F7wvmSGAaVtTmUizReu6fjN8uqzbQ=
 github.com/sirupsen/logrus v1.9.3/go.mod h1:naHLuLoDiP4jHNo9R0sCBMtWGeIprob74mVsIT4qYEQ=
-github.com/stellar/go-stellar-sdk v0.6.0 h1:NM2oqZJQup0QxnJMq6C8s4iIIhU6rHFX0rlsF3wh/Ho=
-github.com/stellar/go-stellar-sdk v0.6.0/go.mod h1:IkcqcrE9UQi7n/1y+MxKB+7qzdjG1T2kGOD7Ss8dqjw=
-github.com/stellar/go-xdr v0.0.0-20260529210834-0bf8f4956364 h1:gOKrfuWdZ92LFlv0TAwgZ7OsWKeBsOMDlGLyFgduI1w=
-github.com/stellar/go-xdr v0.0.0-20260529210834-0bf8f4956364/go.mod h1:If+U9Z1W5xU97VrOgJandQT+2dN7/iOpkCrxBJEyF80=
+github.com/stellar/go-stellar-sdk v0.7.3 h1:r4kKiiTOuNdJrEjKYs5ykLSLWKpq9fp6HnIXUs4TiuI=
+github.com/stellar/go-stellar-sdk v0.7.3/go.mod h1:YTYl7/zFt7oIX5Y4WRgL+3d2upWQDLywlHunZ4fOxvc=
+github.com/stellar/go-xdr v0.0.0-20260806060815-dc590f17552a h1:40YIhQusSioBKDW5Tr+YdjoXphcVeu7eXUS2ibMQBTs=
+github.com/stellar/go-xdr v0.0.0-20260806060815-dc590f17552a/go.mod h1:If+U9Z1W5xU97VrOgJandQT+2dN7/iOpkCrxBJEyF80=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.5.2 h1:xuMeJ0Sdp5ZMRXx/aWO6RZxdr3beISkG5/G/aIRr3pY=
 github.com/stretchr/objx v0.5.2/go.mod h1:FRsXN1f5AsAjCGJKqEizvkpNtU+EGNCLh3NxZ/8L+MA=
