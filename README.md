@@ -28,7 +28,7 @@ The protocol records submitted transaction state. It does not independently veri
 | `packages/cli/` | Developer command-line tools |
 | `indexer/` | Go Soroban event indexer and HTTP API |
 | `examples/` | SDK and integration examples |
-| `docs/` | Protocol, user, and developer documentation |
+| `docs/` | Protocol, user, and developer documentation, including [analytics metric definitions](docs/ANALYTICS_METRICS.md) |
 
 Soroban contract source and deployment details live in the [companion contracts repository](https://github.com/Stellar-Clear/clearledger-contracts).
 

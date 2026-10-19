@@ -69,6 +69,18 @@ export default function AnalyticsClient() {
             Total value locked, funding volume, and pool utilization across the
             ClearLedger protocol.
           </p>
+          <p className="mt-2 text-xs text-slate-500">
+            Figures reflect Stellar Testnet activity only.{" "}
+            <a
+              href="https://github.com/Stellar-Clear/clearledger/blob/main/docs/ANALYTICS_METRICS.md"
+              className="text-primary hover:underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Read the metric definitions and on-chain sources
+            </a>
+            .
+          </p>
         </div>
 
         <section aria-label="Protocol statistics" className="space-y-3">

@@ -26,6 +26,7 @@ ClearLedger is an open-source Stellar testnet prototype for coordinating invoice
 - [Invoice lifecycle](protocol/invoice-lifecycle.md)
 - [Liquidity pool mechanics](protocol/liquidity-pool.md)
 - [Economic model and default risk](protocol/economic-model.md)
+- [Analytics metrics and on-chain sources](ANALYTICS_METRICS.md)
 - [Local development setup](developer-guide/local-setup.md)
 - [Indexer API reference](developer-guide/indexer-api-reference.md)
 - [How to contribute](contributing/how-to-contribute.md)

@@ -99,7 +99,10 @@ Returns the LP position for a given Stellar address.
 
 ## GET /stats
 
-Protocol-level aggregated statistics for the landing page.
+Protocol-level aggregated statistics for the landing page. See
+[Analytics metrics and on-chain sources](../ANALYTICS_METRICS.md) for each
+field's formula, inclusion rules, units, timestamps, and producing contract
+events.
 
 ```json
 {
