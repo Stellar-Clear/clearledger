@@ -3,7 +3,10 @@
 import React, { useEffect, useState } from "react";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
-import { TransactionPending } from "@/components/shared/TransactionPending";
+import {
+  TransactionPending,
+  type TransactionPendingState,
+} from "@/components/shared/TransactionPending";
 import { ShieldAlert, Building2, Globe, FileText, Lock } from "lucide-react";
 import type { useProfile } from "@/hooks/useProfile";
 
@@ -35,6 +38,8 @@ export function RegistrationModal({
   const [showPending, setShowPending] = useState(false);
   const [pendingHash, setPendingHash] = useState<string | null>(null);
   const [pendingText, setPendingText] = useState("Waiting for confirmation...");
+  const [transactionState, setTransactionState] =
+    useState<TransactionPendingState>("pending");
 
   // Clear any stale error from a previous attempt each time the dialog opens.
   useEffect(() => {
@@ -62,6 +67,7 @@ export function RegistrationModal({
       `Registering ${regRole === "issuer" ? "SME / issuer" : "buyer"} profile...`,
     );
     setPendingHash(null);
+    setTransactionState("pending");
     setShowPending(true);
 
     try {
@@ -78,11 +84,13 @@ export function RegistrationModal({
         metadata,
       });
 
+      setTransactionState("confirmed");
       if (typeof txHash === "string") {
         setPendingHash(txHash);
       }
       onClose();
     } catch (err: any) {
+      setTransactionState("failed");
       setLocalError(err.message || "Registration transaction failed");
       setShowPending(false);
     }
@@ -235,8 +243,12 @@ export function RegistrationModal({
 
                 {/* Warnings and errors */}
                 {(localError || registerError) && (
-                  <div className="p-3 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px] flex items-start gap-2">
-                    <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div
+                    role="alert"
+                    aria-live="assertive"
+                    className="p-3 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px] flex items-start gap-2"
+                  >
+                    <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
                     <span>
                       {localError ||
                         (registerError as any)?.message ||
@@ -283,6 +295,12 @@ export function RegistrationModal({
         isOpen={showPending}
         txHash={pendingHash}
         statusText={pendingText}
+        state={transactionState}
+        errorText={
+          localError ||
+          (registerError as Error | null | undefined)?.message ||
+          undefined
+        }
         onClose={
           pendingHash
             ? () => {

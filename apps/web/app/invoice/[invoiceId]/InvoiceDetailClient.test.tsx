@@ -404,13 +404,66 @@ describe("InvoiceDetailClient", () => {
       screen.getByText(/Marking goods as shipped\.\.\./i),
     ).toBeInTheDocument();
 
+    const pendingStatus = screen.getByTestId("transaction-status-polite");
+    expect(pendingStatus).toHaveAttribute("aria-live", "polite");
+    expect(pendingStatus).toHaveTextContent(
+      "Transaction pending. Marking goods as shipped...",
+    );
+    expect(pendingStatus.contains(document.activeElement)).toBe(false);
+
     await waitFor(() =>
       expect(mockShipInvoice).toHaveBeenCalledWith({ invoiceId: INVOICE_ID }),
     );
     await waitFor(() =>
       expect(screen.getByText("ship-tx-hash")).toBeInTheDocument(),
     );
+    await waitFor(() =>
+      expect(screen.getByTestId("transaction-status-polite")).toHaveTextContent(
+        "Transaction confirmed.",
+      ),
+    );
     expect(mockRefetch).toHaveBeenCalled();
+  });
+
+  it("announces a failed transaction assertively and allows a retry", async () => {
+    mockShipInvoice.mockRejectedValueOnce(new Error("Ship failed"));
+    vi.mocked(useWalletStore).mockImplementation(((selector: any) => {
+      const state = {
+        address: ISSUER,
+        connected: true,
+        network: "testnet",
+        token: null,
+        role: "issuer",
+      };
+      return selector ? selector(state) : state;
+    }) as any);
+
+    render(<InvoiceDetailClient invoiceId={INVOICE_ID} />);
+
+    const shipButton = screen.getByRole("button", {
+      name: /MARK GOODS SHIPPED/i,
+    });
+    fireEvent.click(shipButton);
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("Ship failed"),
+    );
+    // The pending dialog closes on failure, so its hidden live regions leave
+    // with it; the route-level alert is the single failure announcement.
+    expect(
+      screen.queryByTestId("transaction-status-assertive"),
+    ).not.toBeInTheDocument();
+
+    // Retrying starts a fresh lifecycle and must announce pending again.
+    fireEvent.click(shipButton);
+    expect(screen.getByTestId("transaction-status-polite")).toHaveTextContent(
+      /Transaction pending/i,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("transaction-status-polite")).toHaveTextContent(
+        "Transaction confirmed.",
+      ),
+    );
   });
 
   it("shows the error message and closes the pending modal when an action fails", async () => {

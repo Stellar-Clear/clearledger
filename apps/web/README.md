@@ -127,6 +127,21 @@ From `apps/web`:
 
 The indexer OpenAPI spec lives at [`../../docs/openapi/indexer.yaml`](../../docs/openapi/indexer.yaml). It documents health, SEP-10 authentication, invoice, stats, event, and pool endpoints.
 
+## Accessibility
+
+Transaction feedback is announced through live regions rather than focus
+changes:
+
+- `TransactionPending` renders a polite `role="status"` region for pending and
+  confirmed states, and an assertive `role="alert"` region for failures or
+  confirmation timeouts. The optional `state` (`"pending" | "confirmed" |
+  "failed"`) and `errorText` props let callers override the inferred state when
+  a transaction completes outside the dialog.
+- `showSuccessToast` and `showErrorToast` expose confirmed and failed outcomes
+  through polite and assertive live regions respectively.
+- Only one region carries text for a given transition, so a state change is not
+  announced twice.
+
 ## Development workflow
 
 - Use the root `.env.example` for all env variables.
