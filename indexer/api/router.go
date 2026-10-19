@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
+	indexermiddleware "clearledger/indexer/middleware"
 	"github.com/getsentry/sentry-go"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/golang-jwt/jwt/v5"
-	indexermiddleware "clearledger/indexer/middleware"
 )
 
 func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
@@ -434,6 +434,10 @@ func NewRouter(h *APIHandler) (*chi.Mux, func()) {
 		})
 		r.Use(RateLimitMiddleware(rl))
 		r.With(indexermiddleware.InvoiceRateLimitMiddleware(invoiceLimiter)).Post("/invoices", h.HandleCreateInvoice)
+
+		// API connection diagnostics. Protected because it exposes operational
+		// metadata, though the payload never contains URLs, tokens, or env values.
+		r.Get("/diagnostics", h.HandleGetDiagnostics)
 
 		// Webhooks
 		r.Post("/webhooks", h.HandleCreateWebhook)
