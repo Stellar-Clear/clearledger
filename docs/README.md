@@ -7,6 +7,7 @@ ClearLedger is an open-source Stellar testnet prototype for coordinating invoice
 
 ## Start here
 
+- [Stellar Testnet quickstart](QUICKSTART.md)
 - [What ClearLedger does](introduction/what-is-clearledger.md)
 - [How the workflow operates](introduction/how-it-works.md)
 - [The trade finance problem](introduction/the-problem.md)

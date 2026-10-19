@@ -4,6 +4,7 @@
 
 ## Introduction
 
+- [Stellar Testnet Quickstart](QUICKSTART.md)
 - [What is ClearLedger?](introduction/what-is-clearledger.md)
 - [The Problem](introduction/the-problem.md)
 - [How It Works](introduction/how-it-works.md)

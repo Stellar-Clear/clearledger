@@ -42,7 +42,7 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-The web app starts at `http://localhost:3000`. For the web app, Go indexer, and PostgreSQL together:
+The web app starts at `http://localhost:3000`. For a guided Testnet walkthrough covering Freighter and a read-only Soroban call, see the [Stellar Testnet quickstart](docs/QUICKSTART.md). For the web app, Go indexer, and PostgreSQL together:
 
 ```bash
 cp .env.docker.example .env.docker

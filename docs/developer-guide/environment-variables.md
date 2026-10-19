@@ -6,10 +6,10 @@
 | `NEXT_PUBLIC_HORIZON_URL`          | Frontend + Backend | Horizon REST API endpoint                | `https://horizon-testnet.stellar.org`                |
 | `NEXT_PUBLIC_SOROBAN_RPC_URL`      | Frontend + Backend | Soroban RPC endpoint                     | `https://soroban-testnet.stellar.org`                |
 | `NEXT_PUBLIC_NETWORK_PASSPHRASE`   | Frontend + Backend | Stellar network passphrase               | `Test SDF Network ; September 2015`                  |
-| `NEXT_PUBLIC_REGISTRY_CONTRACT_ID` | Frontend + Backend | Deployed registry contract address       | `CABG...`                                            |
-| `NEXT_PUBLIC_INVOICE_CONTRACT_ID`  | Frontend + Backend | Deployed invoice contract address        | `CA4O...`                                            |
-| `NEXT_PUBLIC_ESCROW_CONTRACT_ID`   | Frontend + Backend | Deployed escrow contract address         | `CAJW...`                                            |
-| `NEXT_PUBLIC_POOL_CONTRACT_ID`     | Frontend + Backend | Deployed pool contract address           | `CAKE...`                                            |
+| `NEXT_PUBLIC_REGISTRY_CONTRACT_ID` | Frontend + Backend | Deployed registry contract address       | `CCGH...`                                            |
+| `NEXT_PUBLIC_INVOICE_CONTRACT_ID`  | Frontend + Backend | Deployed invoice contract address        | `CCZN...`                                            |
+| `NEXT_PUBLIC_ESCROW_CONTRACT_ID`   | Frontend + Backend | Deployed escrow contract address         | `CC3E...`                                            |
+| `NEXT_PUBLIC_POOL_CONTRACT_ID`     | Frontend + Backend | Deployed pool contract address           | `CDBJ...`                                            |
 | `NEXT_PUBLIC_USDC_ISSUER`          | Frontend + Backend | USDC issuer on Stellar testnet           | `GBBD...`                                            |
 | `NEXT_PUBLIC_USDC_ASSET_CODE`      | Frontend + Backend | USDC asset code                          | `USDC`                                               |
 | `NEXT_PUBLIC_API_BASE_URL`         | Frontend only      | Indexer API base URL                     | `http://localhost:8080`                              |
@@ -18,10 +18,10 @@
 | `HORIZON_URL`                      | Backend only       | Horizon REST API endpoint                | `https://horizon-testnet.stellar.org`                |
 | `SOROBAN_RPC_URL`                  | Backend only       | Soroban RPC endpoint                     | `https://soroban-testnet.stellar.org`                |
 | `NETWORK_PASSPHRASE`               | Backend only       | Stellar network passphrase               | `Test SDF Network ; September 2015`                  |
-| `REGISTRY_CONTRACT_ID`             | Backend only       | Deployed registry contract address       | `CABG...`                                            |
-| `INVOICE_CONTRACT_ID`              | Backend only       | Deployed invoice contract address        | `CA4O...`                                            |
-| `ESCROW_CONTRACT_ID`               | Backend only       | Deployed escrow contract address         | `CAJW...`                                            |
-| `POOL_CONTRACT_ID`                 | Backend only       | Deployed pool contract address           | `CAKE...`                                            |
+| `REGISTRY_CONTRACT_ID`             | Backend only       | Deployed registry contract address       | `CCGH...`                                            |
+| `INVOICE_CONTRACT_ID`              | Backend only       | Deployed invoice contract address        | `CCZN...`                                            |
+| `ESCROW_CONTRACT_ID`               | Backend only       | Deployed escrow contract address         | `CC3E...`                                            |
+| `POOL_CONTRACT_ID`                 | Backend only       | Deployed pool contract address           | `CDBJ...`                                            |
 | `AGENT_REGISTRY_CONTRACT`          | Backend only       | Deployed agent-registry contract address | `CABC...`                                            |
 | `USDC_ISSUER`                      | Backend only       | USDC issuer on Stellar testnet           | `GBBD...`                                            |
 | `USDC_ASSET_CODE`                  | Backend only       | USDC asset code                          | `USDC`                                               |
