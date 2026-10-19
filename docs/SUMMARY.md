@@ -42,6 +42,7 @@
 - [Troubleshooting](developer-guide/troubleshooting.md)
 - [Environment Variables](developer-guide/environment-variables.md)
 - [Mainnet Setup](developer-guide/mainnet-setup.md)
+- [Production Readiness Gates](PRODUCTION_READINESS.md)
 - [SDK Reference](developer-guide/sdk-reference.md)
 - [Indexer API Reference](developer-guide/indexer-api-reference.md)
 - [Webhooks](webhooks.md)
