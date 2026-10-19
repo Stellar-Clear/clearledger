@@ -6,13 +6,16 @@ import { useFocusTrap } from "./useFocusTrap";
 type ProbeProps = {
   enabled: boolean;
   onEscape?: () => void;
+  inertBackground?: boolean;
   children?: React.ReactNode;
 };
 
 // Kept JSX-free so the file can carry the `.test.ts` extension required by
 // #304 (React hooks in this repo are tested from `.test.ts` files).
-function Probe({ enabled, onEscape, children }: ProbeProps) {
-  const ref = useFocusTrap<HTMLDivElement>(enabled, onEscape);
+function Probe({ enabled, onEscape, inertBackground, children }: ProbeProps) {
+  const ref = useFocusTrap<HTMLDivElement>(enabled, onEscape, {
+    inertBackground,
+  });
   const content =
     children ??
     React.createElement(
@@ -129,5 +132,72 @@ describe("useFocusTrap", () => {
 
     await waitFor(() => expect(outside).toHaveFocus());
     outside.remove();
+  });
+
+  it("does not throw or strand focus when the trigger was removed", () => {
+    const outside = document.createElement("button");
+    outside.textContent = "outside";
+    document.body.appendChild(outside);
+    outside.focus();
+
+    const { rerender } = renderProbe({ enabled: true });
+    outside.remove();
+
+    expect(() =>
+      rerender(React.createElement(Probe, { enabled: false })),
+    ).not.toThrow();
+    expect(document.activeElement).not.toBe(outside);
+  });
+
+  it("pulls focus back into the trap if it moves to background content", () => {
+    renderProbe({ enabled: true });
+    const outside = document.createElement("button");
+    outside.textContent = "outside";
+    document.body.appendChild(outside);
+
+    outside.focus();
+
+    expect(screen.getByRole("button", { name: "first" })).toHaveFocus();
+    outside.remove();
+  });
+
+  it("makes background content inert while active and restores it on close", () => {
+    const background = document.createElement("button");
+    background.textContent = "background";
+    document.body.appendChild(background);
+
+    const { rerender } = renderProbe({
+      enabled: true,
+      inertBackground: true,
+    });
+
+    expect(background).toHaveAttribute("inert");
+    expect(background).toHaveAttribute("aria-hidden", "true");
+
+    rerender(
+      React.createElement(Probe, { enabled: false, inertBackground: true }),
+    );
+
+    expect(background).not.toHaveAttribute("inert");
+    expect(background).not.toHaveAttribute("aria-hidden");
+    background.remove();
+  });
+
+  it("preserves pre-existing aria-hidden values when restoring the background", () => {
+    const background = document.createElement("div");
+    background.setAttribute("aria-hidden", "false");
+    document.body.appendChild(background);
+
+    const { rerender } = renderProbe({
+      enabled: true,
+      inertBackground: true,
+    });
+    expect(background).toHaveAttribute("aria-hidden", "true");
+
+    rerender(
+      React.createElement(Probe, { enabled: false, inertBackground: true }),
+    );
+    expect(background).toHaveAttribute("aria-hidden", "false");
+    background.remove();
   });
 });

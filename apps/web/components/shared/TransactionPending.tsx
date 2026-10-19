@@ -28,21 +28,14 @@ export function TransactionPending({
   // completed, i.e. when txHash is available.
   const canDismiss = timedOut || Boolean(txHash && onClose);
 
+  // Escape is handled by the focus trap's document listener so it works no
+  // matter where focus sits inside the dialog, and only once the transaction
+  // can be closed. Background content is inert while authorization is open.
   const overlayRef = useFocusTrap<HTMLDivElement>(
     isOpen,
     canDismiss ? onClose : undefined,
+    { inertBackground: true },
   );
-
-  // Register a global Escape-key listener that dismisses the dialog only
-  // after the transaction has completed or timed out.
-  React.useEffect(() => {
-    if (!canDismiss) return;
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose!();
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [canDismiss, onClose]);
 
   // Timeout logic: if modal stays open for 60s without a tx hash, mark as timed out.
   React.useEffect(() => {
@@ -73,8 +66,12 @@ export function TransactionPending({
         if (canDismiss && e.target === e.currentTarget) onClose!();
       }}
       // Keyboard handler satisfies jsx-a11y/click-events-have-key-events.
+      // Escape itself is dispatched by the focus trap, which also covers
+      // focus targets outside this element.
       onKeyDown={(e) => {
-        if (e.key === "Escape" && canDismiss) onClose!();
+        if (e.key === "Escape" && canDismiss) {
+          e.preventDefault();
+        }
       }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-[#080c10]/95 backdrop-blur-sm p-4"
     >

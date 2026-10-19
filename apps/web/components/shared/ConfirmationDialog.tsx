@@ -9,7 +9,9 @@ import { truncateAddress } from "@/lib/format";
 
 export function ConfirmationDialog() {
   const { pendingAction, cancel } = useConfirmDialogStore();
-  const overlayRef = useFocusTrap<HTMLDivElement>(!!pendingAction, cancel);
+  const overlayRef = useFocusTrap<HTMLDivElement>(!!pendingAction, cancel, {
+    inertBackground: true,
+  });
 
   if (!pendingAction) return null;
 
