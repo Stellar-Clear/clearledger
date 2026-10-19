@@ -10,7 +10,9 @@
     "lint": "next lint",
     "test:e2e": "playwright test --reporter=line",
     "test": "vitest run --coverage --passWithNoTests",
-    "test:coverage": "vitest run --coverage --passWithNoTests"
+    "test:coverage": "vitest run --coverage --passWithNoTests",
+    "check:translations": "node scripts/check-translations.mjs",
+    "test:translations": "node scripts/check-translations.mjs --self-test"
   },
   "dependencies": {
     "@radix-ui/react-popover": "^1.1.23",

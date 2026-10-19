@@ -29,6 +29,11 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check translation catalogs
+        run: |
+          pnpm --filter web test:translations
+          pnpm --filter web check:translations
+
       - name: Typecheck
         run: pnpm typecheck
 

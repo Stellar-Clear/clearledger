@@ -19,6 +19,7 @@ Before opening or requesting review of a pull request, confirm the following:
 - [ ] Code compiles without errors (`pnpm build` / `go build -v .`)
 - [ ] TypeScript type-checking passes with no errors (`pnpm typecheck`)
 - [ ] Linting passes (`pnpm --filter web lint` / `go vet ./...` and `golangci-lint run`)
+- [ ] Translation catalogs are complete (`pnpm check:translations`)
 - [ ] All existing and new tests pass (`pnpm test` / `go test -race ./...`)
 - [ ] No `TODO`, stub, or placeholder code is present
 - [ ] TypeScript changes use strict types (no `any`)
@@ -131,9 +132,13 @@ pnpm --filter web test
 
 # Run SDK tests only
 pnpm --filter @clearledger/sdk test
+
+# Check translation catalogs and the checker's fixtures
+pnpm check:translations
+pnpm --filter web test:translations
 ```
 
-> **Note:** `pnpm test` runs the `@clearledger/sdk`, `@clearledger/sdk-react`, `@clearledger/cli`, and web Vitest suites. It does **not** run Go tests.
+> **Note:** `pnpm test` runs the `@clearledger/sdk`, `@clearledger/sdk-react`, `@clearledger/cli`, and web Vitest suites. It does **not** run Go tests. UI copy lives in the next-intl catalogs under `apps/web/messages`; see the [i18n guide](docs/developer-guide/i18n.md) before adding a locale or a new message.
 
 **Go tests** (indexer, run from the `indexer/` directory):
 
