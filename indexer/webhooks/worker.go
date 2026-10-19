@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -156,8 +155,13 @@ func (w *DeliveryWorker) deliverBatch(ctx context.Context, deliveries []*db.Webh
 
 // attemptDelivery performs a single HTTP delivery attempt with signing.
 func (w *DeliveryWorker) attemptDelivery(ctx context.Context, delivery *db.WebhookDelivery) {
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	sig := sign(delivery.EndpointSecret, ts, delivery.Payload)
+	headers := signingHeaders(
+		delivery.EndpointSecret,
+		delivery.EndpointPreviousSecret,
+		delivery.EndpointPreviousSecretExpiresAt,
+		delivery.Payload,
+		time.Now(),
+	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, delivery.EndpointURL, bytes.NewReader(delivery.Payload))
 	if err != nil {
@@ -165,8 +169,9 @@ func (w *DeliveryWorker) attemptDelivery(ctx context.Context, delivery *db.Webho
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-ClearLedger-Timestamp", ts)
-	req.Header.Set("X-ClearLedger-Signature", "sha256="+sig)
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 
 	resp, err := w.client.Do(req)
 	if err != nil {

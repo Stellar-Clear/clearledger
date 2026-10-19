@@ -438,6 +438,7 @@ func NewRouter(h *APIHandler) (*chi.Mux, func()) {
 		// Webhooks
 		r.Post("/webhooks", h.HandleCreateWebhook)
 		r.Get("/webhooks", h.HandleGetWebhooks)
+		r.Post("/webhooks/{id}/rotate", h.HandleRotateWebhook)
 		r.Delete("/webhooks/{id}", h.HandleDeleteWebhook)
 	})
 
