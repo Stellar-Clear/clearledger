@@ -91,6 +91,8 @@ paths:
                     network_passphrase: Test SDF Network ; September 2015
         "400":
           $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
     post:
       tags: [Auth]
       summary: Exchange signed SEP-10 challenge for JWT
@@ -191,7 +193,7 @@ paths:
             examples:
               invoice:
                 value:
-                  buyer: GBUYERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+                  buyer: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
                   face_value: "10000000000"
                   due_date: 1790000000
       responses:
@@ -205,6 +207,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
         "429":
           $ref: "#/components/responses/RateLimited"
 
@@ -390,6 +394,14 @@ components:
         text/plain:
           schema:
             type: string
+    UnprocessableEntity:
+      description: >-
+        A field is well-formed but carries the wrong Stellar StrKey version,
+        such as a contract (C...) address where an account (G...) is required.
+      content:
+        text/plain:
+          schema:
+            type: string
     Unauthorized:
       description: Unauthorized
       content:
@@ -456,7 +468,13 @@ components:
       properties:
         buyer:
           type: string
-          description: Stellar account address (G...) of the buyer.
+          description: >-
+            Stellar account address (G...) of the buyer. Must be a valid
+            StrKey-encoded account; a malformed address (including a bad
+            checksum) returns 400 and a wrong-version StrKey such as a contract
+            (C...) address returns 422. The authenticated issuer must likewise
+            be an account (G...) StrKey.
+          example: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
         face_value:
           type: string
           description: >-

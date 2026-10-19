@@ -5,8 +5,6 @@ import (
 	"net/http"
 
 	"clearledger/indexer/auth"
-
-	"github.com/stellar/go-stellar-sdk/keypair"
 )
 
 // GET /auth
@@ -17,9 +15,8 @@ func (h *APIHandler) HandleGetAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := keypair.Parse(address)
-	if err != nil {
-		http.Error(w, "invalid address format", http.StatusBadRequest)
+	if err := validateAccountAddressField("address", address); err != nil {
+		writeHTTPError(w, r, err)
 		return
 	}
 

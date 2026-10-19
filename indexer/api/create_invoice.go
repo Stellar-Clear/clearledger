@@ -3,15 +3,16 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"log/slog"
 	"math/big"
 	"net/http"
 	"strconv"
 	"time"
 
+	"clearledger/indexer/auth"
 	"clearledger/indexer/soroban"
 
-	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -94,13 +95,16 @@ func validateCreateInvoiceRequest(ctx context.Context, body createInvoiceRequest
 	if !ok || issuer == "" {
 		return nil, httpErrorf(http.StatusUnauthorized, "Unauthorized: user address missing from context")
 	}
+	if err := validateAccountAddressField("issuer address", issuer); err != nil {
+		return nil, err
+	}
 
-	if body.Buyer == "" || body.FaceValue == "" || body.DueDate <= 0 {
+	if body.FaceValue == "" || body.DueDate <= 0 {
 		return nil, httpErrorf(http.StatusBadRequest, "missing required invoice parameters")
 	}
 
-	if _, err := keypair.Parse(body.Buyer); err != nil {
-		return nil, httpErrorf(http.StatusBadRequest, "invalid buyer address")
+	if err := validateAccountAddressField("buyer address", body.Buyer); err != nil {
+		return nil, err
 	}
 
 	// Reject absurdly long decimal strings before parsing so a huge request
@@ -129,6 +133,29 @@ func validateCreateInvoiceRequest(ctx context.Context, body createInvoiceRequest
 		FaceValue: faceValueBig,
 		DueDate:   dueDate,
 	}, nil
+}
+
+// validateAccountAddressField decodes a public-key field as a Stellar account
+// StrKey (G...) and reports a field-specific client error. A well-formed
+// StrKey with the wrong version (for example a contract C...) is semantically
+// unprocessable and gets 422; malformed input, including a bad checksum, gets
+// 400. Decoder errors stay server-side so no implementation details leak.
+func validateAccountAddressField(field, value string) error {
+	return validateAddressField(field, value, auth.ValidateAccountAddress, "account address (G...)")
+}
+
+func validateAddressField(field, value string, validate func(string) error, expected string) error {
+	err := validate(value)
+	switch {
+	case errors.Is(err, auth.ErrAddressEmpty):
+		return httpErrorf(http.StatusBadRequest, "invalid %s: value is required", field)
+	case errors.Is(err, auth.ErrAddressWrongVersion):
+		return httpErrorf(http.StatusUnprocessableEntity, "invalid %s: expected a Stellar %s", field, expected)
+	case err != nil:
+		return httpErrorf(http.StatusBadRequest, "invalid %s: malformed Stellar StrKey", field)
+	default:
+		return nil
+	}
 }
 
 // validateDueDate ensures due_date is a future timestamp below the maximum
@@ -215,6 +242,13 @@ func (h *APIHandler) fetchServerSequence(ctx context.Context) (int64, error) {
 // buildCreateInvoiceOp converts the validated params into the invoice
 // contract's `create` invocation.
 func buildCreateInvoiceOp(contractID string, params *createInvoiceParams) (*txnbuild.InvokeHostFunction, error) {
+	// The contract ID comes from server configuration rather than the request,
+	// so a bad value is an operator error, never a client error. Validate it
+	// as a contract (C...) StrKey before shaping any operation.
+	if err := auth.ValidateContractAddress(contractID); err != nil {
+		return nil, httpErrorf(http.StatusInternalServerError, "invalid invoice contract configuration")
+	}
+
 	issuerVal, err := soroban.MakeAddressScVal(params.Issuer)
 	if err != nil {
 		return nil, httpErrorf(http.StatusInternalServerError, "failed to build issuer address")
