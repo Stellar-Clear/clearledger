@@ -87,6 +87,46 @@ type httpError struct {
 	message string
 }
 
+type apiErrorBody struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+func apiErrorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
+		return "bad_request"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "unauthorized"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	case http.StatusGatewayTimeout, http.StatusRequestTimeout:
+		return "timeout"
+	case http.StatusServiceUnavailable:
+		return "service_unavailable"
+	default:
+		if status >= http.StatusInternalServerError {
+			return "internal_error"
+		}
+		return "request_failed"
+	}
+}
+
+func writeAPIError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	var body apiErrorBody
+	body.Error.Code = apiErrorCode(status)
+	body.Error.Message = message
+	if r != nil {
+		body.RequestID = middleware.GetReqID(r.Context())
+	}
+	writeJSON(w, status, body)
+}
+
 func (e *httpError) Error() string { return e.message }
 
 // Status returns the HTTP status code this error should be served under.
@@ -110,7 +150,7 @@ func internalError(w http.ResponseWriter, r *http.Request, msg string, err error
 		"method", r.Method,
 		"path", r.URL.Path,
 	)
-	http.Error(w, msg+" (request id: "+middleware.GetReqID(r.Context())+")", http.StatusInternalServerError)
+	writeAPIError(w, r, http.StatusInternalServerError, msg)
 }
 
 // writeHTTPError serves err as a plain-text error response, using the status
@@ -120,7 +160,7 @@ func internalError(w http.ResponseWriter, r *http.Request, msg string, err error
 func writeHTTPError(w http.ResponseWriter, r *http.Request, err error) {
 	var he *httpError
 	if errors.As(err, &he) {
-		http.Error(w, he.message, he.status)
+		writeAPIError(w, r, he.status, he.message)
 		return
 	}
 	internalError(w, r, "internal server error", err)

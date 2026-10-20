@@ -10,9 +10,9 @@ import (
 	"net/url"
 	"time"
 
+	"clearledger/indexer/db"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"clearledger/indexer/db"
 )
 
 type WebhookSubscription struct {
@@ -121,39 +121,39 @@ var deleteWebhookSub = func(ctx context.Context, id uuid.UUID, userAddr string) 
 func (h *APIHandler) HandleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 	userAddr, ok := GetUserAddress(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeAPIError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	var req CreateWebhookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
 	if req.URL == "" {
-		http.Error(w, "url is required", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "url is required")
 		return
 	}
 	if len(req.EventTypes) == 0 {
-		http.Error(w, "event_types is required", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "event_types is required")
 		return
 	}
 
 	if !isSafeURL(req.URL) {
-		http.Error(w, "invalid or unsafe url", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "invalid or unsafe url")
 		return
 	}
 
 	secret, err := generateSecret()
 	if err != nil {
-		http.Error(w, "failed to generate secret", http.StatusInternalServerError)
+		internalError(w, r, "failed to generate webhook secret", err)
 		return
 	}
 
 	sub, err := createWebhookSub(r.Context(), userAddr, req.URL, secret, req.EventTypes)
 	if err != nil {
-		http.Error(w, "failed to create webhook subscription", http.StatusInternalServerError)
+		internalError(w, r, "failed to create webhook subscription", err)
 		return
 	}
 
@@ -165,13 +165,13 @@ func (h *APIHandler) HandleCreateWebhook(w http.ResponseWriter, r *http.Request)
 func (h *APIHandler) HandleGetWebhooks(w http.ResponseWriter, r *http.Request) {
 	userAddr, ok := GetUserAddress(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeAPIError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	subs, err := getWebhookSubs(r.Context(), userAddr)
 	if err != nil {
-		http.Error(w, "failed to query webhooks", http.StatusInternalServerError)
+		internalError(w, r, "failed to query webhooks", err)
 		return
 	}
 
@@ -184,25 +184,25 @@ func (h *APIHandler) HandleGetWebhooks(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandler) HandleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
 	userAddr, ok := GetUserAddress(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeAPIError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "invalid id")
 		return
 	}
 
 	affected, err := deleteWebhookSub(r.Context(), id, userAddr)
 	if err != nil {
-		http.Error(w, "failed to delete webhook", http.StatusInternalServerError)
+		internalError(w, r, "failed to delete webhook", err)
 		return
 	}
 
 	if affected == 0 {
-		http.Error(w, "webhook not found", http.StatusNotFound)
+		writeAPIError(w, r, http.StatusNotFound, "webhook not found")
 		return
 	}
 

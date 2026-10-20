@@ -143,18 +143,18 @@ func (h *APIHandler) HandleGetPoolSnapshots(w http.ResponseWriter, r *http.Reque
 func (h *APIHandler) HandleGetLPPosition(w http.ResponseWriter, r *http.Request) {
 	address := chi.URLParam(r, "address")
 	if address == "" {
-		http.Error(w, "missing address parameter", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "missing address parameter")
 		return
 	}
 
 	if _, err := keypair.Parse(address); err != nil {
-		http.Error(w, "invalid address format", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "invalid address format")
 		return
 	}
 
 	addrVal, err := soroban.MakeAddressScVal(address)
 	if err != nil {
-		http.Error(w, "failed to build address ScVal", http.StatusInternalServerError)
+		internalError(w, r, "failed to build address ScVal", err)
 		return
 	}
 
