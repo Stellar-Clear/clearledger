@@ -206,6 +206,19 @@ export interface SimulationResult {
   footprintSize: number;
 }
 
+/** Result of a submitted transaction, including structured failure details. */
+export type TransactionSubmissionResult =
+  | {
+      transactionHash: string;
+      status: "SUCCESS";
+      returnValue?: unknown;
+    }
+  | {
+      transactionHash: null;
+      status: "ERROR";
+      error: { name: string; message: string; method: string };
+    };
+
 export class BaseContractClient {
   protected contractId: string;
   private contractInstance: Contract;
@@ -251,6 +264,36 @@ export class BaseContractClient {
     args: xdr.ScVal[],
     publicKey: string,
   ): Promise<string> {
+    const result = await this.writeContractDetailed(method, args, publicKey);
+    return result.transactionHash;
+  }
+
+  /** Submits a contract call and returns its confirmed result without throwing. */
+  public async submitTransaction(
+    method: string,
+    args: xdr.ScVal[],
+    publicKey: string,
+  ): Promise<TransactionSubmissionResult> {
+    try {
+      return await this.writeContractDetailed(method, args, publicKey);
+    } catch (error) {
+      return {
+        transactionHash: null,
+        status: "ERROR",
+        error: {
+          name: error instanceof Error ? error.name : "Error",
+          message: error instanceof Error ? error.message : String(error),
+          method,
+        },
+      };
+    }
+  }
+
+  private async writeContractDetailed(
+    method: string,
+    args: xdr.ScVal[],
+    publicKey: string,
+  ): Promise<Extract<TransactionSubmissionResult, { status: "SUCCESS" }>> {
     const config = getConfig();
     const server = getSorobanServer();
     const account = await withRetry(() => server.getAccount(publicKey));
@@ -264,6 +307,15 @@ export class BaseContractClient {
     const sim = await withRetry(() => server.simulateTransaction(tx));
     if (rpc.Api.isSimulationError(sim))
       throw new SimulationError(method, sim.error);
+    const retval = sim.result?.retval;
+    let returnValue: unknown;
+    if (retval && retval.switch() !== xdr.ScValType.scvVoid()) {
+      try {
+        returnValue = scValToNative(retval);
+      } catch {
+        returnValue = retval;
+      }
+    }
     const prepared = await withRetry(() => server.prepareTransaction(tx));
     const signed = await signTransactionCompat(prepared.toXDR(), {
       network:
@@ -295,7 +347,11 @@ export class BaseContractClient {
       throw new TransactionTimeoutError(result.hash);
     if (response.status === rpc.Api.GetTransactionStatus.FAILED)
       throw new TransactionFailedError(method);
-    return result.hash;
+    return {
+      transactionHash: result.hash,
+      status: "SUCCESS",
+      ...(returnValue === undefined ? {} : { returnValue }),
+    };
   }
 
   public async simulateTransaction(
