@@ -5,6 +5,10 @@ info:
   description: |
     Structured API documentation for the ClearLedger Go indexer/API service.
 
+    Every response includes a server-generated `X-Request-Id` header. Use this
+    value when contacting operators about a failed request; request logs record
+    the same ID. Client-supplied request IDs are ignored.
+
     ## SEP-10 authentication flow
 
     1. The frontend calls `GET /auth?address=<stellar_public_key>` to request an authentication challenge.

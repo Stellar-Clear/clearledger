@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -74,6 +77,40 @@ func TestCORSMiddleware_AllowsConfiguredOrigin(t *testing.T) {
 
 	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
 		t.Fatalf("expected allowed origin to be forwarded, got %q", got)
+	}
+	if got := rr.Header().Get("Access-Control-Expose-Headers"); got != "X-Request-Id" {
+		t.Fatalf("exposed response headers = %q, want X-Request-Id", got)
+	}
+}
+
+func TestRequestIDMiddlewareReturnsServerGeneratedIDAndLogsIt(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := RequestIDMiddleware(StructuredRequestLogMiddleware(next))
+	req := httptest.NewRequest(http.MethodGet, "/probe?secret=do-not-log", nil)
+	req.Header.Set("X-Request-Id", "caller-controlled")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	requestID := rr.Header().Get("X-Request-Id")
+	if requestID == "" || requestID == "caller-controlled" {
+		t.Fatalf("response request ID = %q, want a fresh server ID", requestID)
+	}
+	var record map[string]interface{}
+	if err := json.Unmarshal(logs.Bytes(), &record); err != nil {
+		t.Fatalf("decode structured log: %v", err)
+	}
+	if record["request_id"] != requestID || record["method"] != http.MethodGet || record["path"] != "/probe" || record["status"] != float64(http.StatusNoContent) {
+		t.Fatalf("log record does not match response: %v", record)
+	}
+	if bytes.Contains(logs.Bytes(), []byte("do-not-log")) {
+		t.Fatalf("query string was included in log record: %s", logs.String())
 	}
 }
 

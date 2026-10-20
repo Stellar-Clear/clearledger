@@ -11,6 +11,7 @@ import (
 
 	"clearledger/indexer/soroban"
 
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -201,7 +202,7 @@ func (h *APIHandler) fetchServerSequence(ctx context.Context) (int64, error) {
 	if err := soroban.CallSorobanRPC(ctx, h.cfg.SorobanRPCURL, "getAccount", map[string]string{"address": h.serverKP.Address()}, &accResp); err != nil {
 		// err may embed the full RPC URL (and any API key in it); log it and
 		// return a client-safe message instead of interpolating it (issue #921).
-		slog.ErrorContext(ctx, "failed to fetch server account", "error", err)
+		slog.ErrorContext(ctx, "failed to fetch server account", "error", err, "request_id", middleware.GetReqID(ctx))
 		return 0, httpErrorf(http.StatusInternalServerError, "failed to fetch server account")
 	}
 
@@ -245,7 +246,7 @@ func (h *APIHandler) simulateCreateInvoiceTx(ctx context.Context, txBase64 strin
 	if err := soroban.CallSorobanRPC(ctx, h.cfg.SorobanRPCURL, "simulateTransaction", map[string]string{"transaction": txBase64}, &simResp); err != nil {
 		// err may embed the full RPC URL (and any API key in it); log it and
 		// return a client-safe message instead of interpolating it (issue #921).
-		slog.ErrorContext(ctx, "invoice simulation failed", "error", err)
+		slog.ErrorContext(ctx, "invoice simulation failed", "error", err, "request_id", middleware.GetReqID(ctx))
 		return nil, "", httpErrorf(http.StatusInternalServerError, "simulation failed")
 	}
 
@@ -326,7 +327,7 @@ func (h *APIHandler) submitAndConfirm(ctx context.Context, signedTx string) (has
 	if err := soroban.CallSorobanRPC(ctx, h.cfg.SorobanRPCURL, "sendTransaction", map[string]string{"transaction": signedTx}, &submitResp); err != nil {
 		// err may embed the full RPC URL (and any API key in it); log it and
 		// return a client-safe message instead of interpolating it (issue #921).
-		slog.ErrorContext(ctx, "failed to send transaction", "error", err)
+		slog.ErrorContext(ctx, "failed to send transaction", "error", err, "request_id", middleware.GetReqID(ctx))
 		return "", "", httpErrorf(http.StatusInternalServerError, "failed to send transaction")
 	}
 
@@ -358,7 +359,7 @@ func (h *APIHandler) awaitTransaction(ctx context.Context, hash string) (string,
 		if err := soroban.CallSorobanRPC(ctx, h.cfg.SorobanRPCURL, "getTransaction", map[string]string{"hash": hash}, &txResult); err != nil {
 			// err may embed the full RPC URL (and any API key in it); log it and
 			// return a client-safe message instead of interpolating it (issue #921).
-			slog.ErrorContext(ctx, "failed to poll transaction", "error", err)
+			slog.ErrorContext(ctx, "failed to poll transaction", "error", err, "request_id", middleware.GetReqID(ctx))
 			return "", httpErrorf(http.StatusInternalServerError, "failed to poll transaction")
 		}
 

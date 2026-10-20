@@ -11,11 +11,12 @@ import (
 	"sync"
 	"time"
 
+	indexermiddleware "clearledger/indexer/middleware"
 	"github.com/getsentry/sentry-go"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/golang-jwt/jwt/v5"
-	indexermiddleware "clearledger/indexer/middleware"
+	"github.com/google/uuid"
 )
 
 func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
@@ -93,6 +94,7 @@ func CORSMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Expose-Headers", middleware.RequestIDHeader)
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -118,6 +120,7 @@ func RecoveryMiddleware() func(http.Handler) http.Handler {
 					slog.Error("panic recovered in HTTP handler",
 						"error", fmt.Sprintf("%v", rvr),
 						"stack", string(debug.Stack()),
+						"request_id", middleware.GetReqID(r.Context()),
 						"method", r.Method,
 						"path", r.URL.Path,
 					)
@@ -366,8 +369,8 @@ func NewRouter(h *APIHandler) (*chi.Mux, func()) {
 	r := chi.NewRouter()
 
 	// Global middleware
-	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
+	r.Use(RequestIDMiddleware)
+	r.Use(StructuredRequestLogMiddleware)
 	r.Use(RecoveryMiddleware())
 	r.Use(TrustedProxyMiddleware(h.cfg.TrustedProxyCIDRs))
 	r.Use(CORSMiddleware(h.cfg.CORSAllowedOrigins))
@@ -447,6 +450,38 @@ func NewRouter(h *APIHandler) (*chi.Mux, func()) {
 	}
 }
 
+// RequestIDMiddleware assigns a fresh server-generated ID to every request.
+// It deliberately ignores client-supplied values so callers cannot forge or
+// collide with IDs used to correlate server logs.
+func RequestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := uuid.NewString()
+		ctx := context.WithValue(r.Context(), middleware.RequestIDKey, requestID)
+		w.Header().Set(middleware.RequestIDHeader, requestID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// StructuredRequestLogMiddleware emits one structured completion record with
+// the same request ID returned to the caller.
+func StructuredRequestLogMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(wrapped, r)
+		status := wrapped.Status()
+		if status == 0 {
+			status = http.StatusOK
+		}
+		slog.InfoContext(r.Context(), "http request completed",
+			"request_id", middleware.GetReqID(r.Context()),
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", status,
+			"duration_ms", time.Since(started).Milliseconds(),
+		)
+	})
+}
 func metricsTokenMiddleware(expected string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

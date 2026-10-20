@@ -5,6 +5,10 @@ and `http://localhost:8080` in local development.
 
 All amounts are returned as strings to preserve u128 precision.
 
+Each response includes a server-generated `X-Request-Id` header. The same ID
+appears in structured server logs and can be used to trace a request. Any
+client-supplied `X-Request-Id` is replaced by the server.
+
 ## GET /health
 
 Health check. Returns 200 if the indexer is running.

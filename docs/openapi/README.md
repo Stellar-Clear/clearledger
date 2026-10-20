@@ -2,6 +2,8 @@
 
 The OpenAPI 3.0 specification for the Go indexer/API lives in [`indexer.yaml`](./indexer.yaml).
 
+All responses include the server-generated `X-Request-Id` correlation header.
+
 ## Routes covered
 
 | Method | Path                       | Auth | Description                       |
