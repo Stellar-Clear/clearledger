@@ -405,6 +405,7 @@ func (l *EventListener) pollEvents(ctx context.Context, startLedger int32) (int3
 		if err != nil {
 			return startLedger, err
 		}
+		api.SetListenerLedgerMetrics(latest, startLedger-1)
 		return latest + 1, nil
 	}
 
@@ -508,6 +509,7 @@ func (l *EventListener) pollEvents(ctx context.Context, startLedger int32) (int3
 		}
 		next = safeLedger + 1
 	}
+	api.SetListenerLedgerMetrics(latestLedgerSeq, next-1)
 	return next, nil
 }
 
