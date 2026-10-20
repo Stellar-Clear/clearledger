@@ -1,6 +1,7 @@
 export * from "./config.js";
 export * from "./amounts.js";
 export * from "./base.js";
+export * from "./errors.js";
 export * from "./types/index.js";
 export * from "./clients/registry.js";
 export * from "./clients/invoice.js";
