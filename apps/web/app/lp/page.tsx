@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { PageLayout } from "@/components/shared/PageLayout";
 import { WalletConnect } from "@/components/shared/WalletConnect";
 import { SimulationPreview } from "@/components/shared/SimulationPreview";
@@ -14,6 +14,7 @@ import { useConfirmDialogStore } from "@/store/confirmDialog";
 import { PoolClient, type SimulationResult } from "@clearledger/sdk";
 import { Address, nativeToScVal } from "@stellar/stellar-sdk";
 import { formatAmount } from "@/lib/assets";
+import { useInvoiceList } from "@/hooks/useInvoices";
 
 const poolContractID = process.env.NEXT_PUBLIC_POOL_CONTRACT_ID || "";
 const STROOPS_PER_UNIT = 10_000_000;
@@ -57,6 +58,11 @@ export default function LPDashboard() {
     isPositionLoading,
   } = usePool();
   const requestConfirmation = useConfirmDialogStore((state) => state.request);
+  const {
+    invoices: invoiceSnapshot,
+    total: invoiceSnapshotTotal,
+    isLoading: isInvoiceSnapshotLoading,
+  } = useInvoiceList({ page: 1, limit: 100 });
   const [depositAmount, setDepositAmount] = useState("");
   const [withdrawShares, setWithdrawShares] = useState("");
   const [simDetails, setSimDetails] = useState<SimulationResult | null>(null);
@@ -149,6 +155,23 @@ export default function LPDashboard() {
     Math.max(0, (typedStats?.utilizationRateBps ?? 0) / 100),
   );
   const sharePrice = formatSharePrice(typedStats?.sharePrice);
+  const activeInvoiceSnapshot = useMemo(
+    () =>
+      invoiceSnapshot.filter((invoice) =>
+        ["Funded", "Active", "Confirmed"].includes(invoice.status),
+      ),
+    [invoiceSnapshot],
+  );
+  const indexedCommitted = activeInvoiceSnapshot.reduce(
+    (total, invoice) => total + invoice.fundedAmount,
+    0n,
+  );
+  const snapshotComplete = invoiceSnapshotTotal <= invoiceSnapshot.length;
+  const poolSnapshotMatches =
+    typedStats &&
+    snapshotComplete &&
+    activeInvoiceSnapshot.length === typedStats.activeInvoiceCount &&
+    indexedCommitted === typedStats.totalFunded;
 
   return (
     <PageLayout>
@@ -215,6 +238,65 @@ export default function LPDashboard() {
               </div>
             </div>
           )}
+        </section>
+
+        <section aria-labelledby="commitments-heading" className="space-y-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2
+              id="commitments-heading"
+              className="text-sm font-bold uppercase tracking-wider text-white"
+            >
+              Active Invoice Commitments
+            </h2>
+            <span className="text-[10px] text-slate-500">
+              Indexer snapshot: {activeInvoiceSnapshot.length} of {invoiceSnapshotTotal} invoices
+            </span>
+          </div>
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <div className="grid grid-cols-2 gap-4 border-b border-border/40 p-4 sm:grid-cols-3">
+              <Stat
+                label="Invoice funded amount"
+                value={isInvoiceSnapshotLoading ? "Loading…" : formatShareValue(indexedCommitted)}
+              />
+              <Stat
+                label="Pool locked amount"
+                value={formatShareValue(typedStats?.totalFunded)}
+              />
+              <Stat
+                label="Pool active invoice count"
+                value={String(typedStats?.activeInvoiceCount ?? 0)}
+              />
+            </div>
+            {!isInvoiceSnapshotLoading && !snapshotComplete && (
+              <p className="border-b border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
+                Reconciliation is partial: the indexer returned the first 100 of {invoiceSnapshotTotal} invoices.
+              </p>
+            )}
+            {!isInvoiceSnapshotLoading && snapshotComplete && typedStats && !poolSnapshotMatches && (
+              <p role="status" className="border-b border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
+                The invoice index and pool totals do not match. Refresh the indexer snapshot before relying on these figures.
+              </p>
+            )}
+            {activeInvoiceSnapshot.length === 0 ? (
+              <p className="p-4 text-xs text-slate-500">
+                {isInvoiceSnapshotLoading ? "Loading invoice snapshot…" : "No funded or active invoices in the current indexer snapshot."}
+              </p>
+            ) : (
+              <ul className="max-h-64 divide-y divide-border/30 overflow-y-auto">
+                {activeInvoiceSnapshot.map((invoice) => (
+                  <li key={invoice.id} className="flex items-center justify-between gap-4 px-4 py-3 text-xs">
+                    <a href={`/invoice/${invoice.id}`} className="truncate font-mono text-primary hover:underline">
+                      {invoice.id.slice(0, 10)}…
+                    </a>
+                    <span className="text-slate-400">{invoice.status}</span>
+                    <span className="shrink-0 font-mono text-white">
+                      {formatShareValue(invoice.fundedAmount)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </section>
 
         <section aria-labelledby="position-heading" className="space-y-3">
