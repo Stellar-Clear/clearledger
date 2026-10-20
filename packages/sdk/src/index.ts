@@ -5,6 +5,7 @@ export * from "./types/index.js";
 export * from "./clients/registry.js";
 export * from "./clients/invoice.js";
 export * from "./clients/pool.js";
+export * from "./clients/poolFactory.js";
 export * from "./clients/escrow.js";
 export * from "./clients/token.js";
 export * from "./clients/agentRegistry.js";
