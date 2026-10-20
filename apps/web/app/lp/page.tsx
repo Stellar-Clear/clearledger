@@ -43,6 +43,15 @@ function formatShareValue(value: bigint | undefined): string {
   return formatAmount(value ?? 0n);
 }
 
+function parseQuotedShares(value: unknown): bigint | null {
+  if (typeof value === "bigint" && value >= 0n) return value;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return BigInt(value);
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) return BigInt(value);
+  return null;
+}
+
 export default function LPDashboard() {
   const connected = useWalletStore((s) => s.connected);
   const address = useWalletStore((s) => s.address);
@@ -149,6 +158,7 @@ export default function LPDashboard() {
     Math.max(0, (typedStats?.utilizationRateBps ?? 0) / 100),
   );
   const sharePrice = formatSharePrice(typedStats?.sharePrice);
+  const quotedShares = parseQuotedShares(simDetails?.expectedResult);
 
   return (
     <PageLayout>
@@ -282,6 +292,11 @@ export default function LPDashboard() {
               error={simError}
               isLoading={isSimulating}
             />
+            {quotedShares !== null && (
+              <p className="text-xs text-slate-300" aria-live="polite">
+                Expected LP shares from contract simulation: {formatShareValue(quotedShares)}
+              </p>
+            )}
             <button
               type="submit"
               disabled={isDepositing}
