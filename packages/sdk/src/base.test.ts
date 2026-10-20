@@ -172,6 +172,32 @@ describe("BaseContractClient", () => {
       expect(mockServer.sendTransaction).toHaveBeenCalledTimes(1);
     });
 
+    it("waits through an RPC NOT_FOUND window before reporting success", async () => {
+      mockServer.simulateTransaction.mockResolvedValue({
+        result: { retval: xdr.ScVal.scvVoid() },
+        transactionData: { getReadOnly: () => [], getReadWrite: () => [] },
+        minResourceFee: "0",
+      });
+      mockServer.sendTransaction.mockResolvedValue({
+        status: "PENDING",
+        hash: "mock-hash",
+      });
+      mockServer.getTransaction
+        .mockResolvedValueOnce({ status: rpc.Api.GetTransactionStatus.NOT_FOUND })
+        .mockResolvedValueOnce({ status: rpc.Api.GetTransactionStatus.SUCCESS });
+
+      vi.useFakeTimers();
+      const submission = client.testWriteContract(
+        "test_method",
+        [],
+        "GACR43ILX6H4PGAOO5QKSZLU4ZJMGT3E66EAUDPLM5J6YTP4Y3PSHWGB",
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(submission).resolves.toBe("mock-hash");
+      expect(mockServer.getTransaction).toHaveBeenCalledTimes(2);
+      vi.useRealTimers();
+    });
+
     it("handles transaction timeout error", async () => {
       mockServer.simulateTransaction.mockResolvedValue({
         result: { retval: xdr.ScVal.scvVoid() },
