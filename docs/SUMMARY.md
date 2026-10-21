@@ -4,6 +4,7 @@
 
 ## Introduction
 
+- [Stellar Testnet Quickstart](QUICKSTART.md)
 - [What is ClearLedger?](introduction/what-is-clearledger.md)
 - [The Problem](introduction/the-problem.md)
 - [How It Works](introduction/how-it-works.md)
@@ -42,8 +43,11 @@
 - [Troubleshooting](developer-guide/troubleshooting.md)
 - [Environment Variables](developer-guide/environment-variables.md)
 - [Mainnet Setup](developer-guide/mainnet-setup.md)
+- [Production Readiness Gates](PRODUCTION_READINESS.md)
 - [SDK Reference](developer-guide/sdk-reference.md)
 - [Indexer API Reference](developer-guide/indexer-api-reference.md)
+- [Indexer Operations: Recovery, Backfill, and Webhook Replay](developer-guide/indexer-operations.md)
+- [Analytics Metrics and On-Chain Sources](ANALYTICS_METRICS.md)
 - [Webhooks](webhooks.md)
 - [Security Headers](developer-guide/security-headers.md)
 - [Internationalization (i18n)](developer-guide/i18n.md)
@@ -51,3 +55,4 @@
 ## Contributing
 
 - [How to Contribute](contributing/how-to-contribute.md)
+- [Accessibility Statement](ACCESSIBILITY.md)

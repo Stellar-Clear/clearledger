@@ -28,7 +28,7 @@ See the root [`README.md`](../../README.md) for the project overview and testnet
 
 ## Environment setup
 
-The web app has a frontend-only env template at [`.env.example`](.env.example). Copy it to [`.env.local`](.env.local) for a web-only setup:
+The web app has a frontend-only env template at [`.env.example`](.env.example). Copy it to `.env.local` for a web-only setup:
 
 ```bash
 cp .env.example .env.local
@@ -123,9 +123,32 @@ From `apps/web`:
 4. Use the app navbar wallet button to connect.
 5. Register an SME or buyer profile and complete the protocol verification step before gated actions. Registration is not a substitute for legal or commercial due diligence.
 
+## Accessibility
+
+See the [accessibility statement](../../docs/ACCESSIBILITY.md) for the tested
+keyboard flows, known limitations, browser and assistive-technology coverage,
+and the route for reporting an accessibility problem. The underlying tests live
+in this package and can be run with `pnpm test` (Vitest) or `pnpm test:e2e`
+(Playwright, desktop Chromium).
+
 ## API documentation
 
 The indexer OpenAPI spec lives at [`../../docs/openapi/indexer.yaml`](../../docs/openapi/indexer.yaml). It documents health, SEP-10 authentication, invoice, stats, event, and pool endpoints.
+
+## Accessibility
+
+Transaction feedback is announced through live regions rather than focus
+changes:
+
+- `TransactionPending` renders a polite `role="status"` region for pending and
+  confirmed states, and an assertive `role="alert"` region for failures or
+  confirmation timeouts. The optional `state` (`"pending" | "confirmed" |
+  "failed"`) and `errorText` props let callers override the inferred state when
+  a transaction completes outside the dialog.
+- `showSuccessToast` and `showErrorToast` expose confirmed and failed outcomes
+  through polite and assertive live regions respectively.
+- Only one region carries text for a given transition, so a state change is not
+  announced twice.
 
 ## Development workflow
 

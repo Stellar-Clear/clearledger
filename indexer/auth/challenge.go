@@ -21,6 +21,10 @@ const ChallengeOperationName = "clearledger auth"
 
 // GenerateChallenge constructs and signs a SEP-10 challenge transaction
 func GenerateChallenge(serverKP *keypair.Full, clientAddr string, passphrase string) (string, error) {
+	if err := ValidateAccountAddress(clientAddr); err != nil {
+		return "", fmt.Errorf("invalid client address: %w", err)
+	}
+
 	nonce := make([]byte, 48)
 	if _, err := rand.Read(nonce); err != nil {
 		return "", err
@@ -86,6 +90,9 @@ func VerifyChallenge(signedXDR string, serverKP *keypair.Full, passphrase string
 	clientAddr := op.SourceAccount
 	if clientAddr == "" {
 		return "", errors.New("client source account is empty")
+	}
+	if err := ValidateAccountAddress(clientAddr); err != nil {
+		return "", fmt.Errorf("invalid client source account: %w", err)
 	}
 
 	if op.Name != ChallengeOperationName {

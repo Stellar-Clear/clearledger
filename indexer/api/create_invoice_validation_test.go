@@ -10,7 +10,29 @@ import (
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
+	"github.com/stellar/go-stellar-sdk/strkey"
 )
+
+// testContractAddress returns a valid 32-byte contract (C...) StrKey.
+func testContractAddress(t *testing.T) string {
+	t.Helper()
+
+	address, err := strkey.Encode(strkey.VersionByteContract, make([]byte, 32))
+	if err != nil {
+		t.Fatalf("encode contract address: %v", err)
+	}
+	return address
+}
+
+// corruptStrkeyChecksum changes the final base32 character so the StrKey
+// decodes structurally but fails checksum validation.
+func corruptStrkeyChecksum(address string) string {
+	replacement := byte('A')
+	if address[len(address)-1] == replacement {
+		replacement = 'B'
+	}
+	return address[:len(address)-1] + string(replacement)
+}
 
 // futureDueDate returns a due date comfortably inside the accepted window
 // (tomorrow), since validation rejects timestamps in the past.
@@ -60,12 +82,28 @@ func TestValidateCreateInvoiceRequest(t *testing.T) {
 			wantMsg:    "Unauthorized: user address missing from context",
 		},
 		{
+			name:       "malformed issuer in context",
+			issuer:     "not-a-stellar-address",
+			withIssuer: true,
+			body:       validBody,
+			wantStatus: http.StatusBadRequest,
+			wantMsg:    "invalid issuer address: malformed Stellar StrKey",
+		},
+		{
+			name:       "contract issuer in context",
+			issuer:     testContractAddress(t),
+			withIssuer: true,
+			body:       validBody,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantMsg:    "invalid issuer address: expected a Stellar account address (G...)",
+		},
+		{
 			name:       "missing buyer",
 			issuer:     issuer.Address(),
 			withIssuer: true,
 			body:       createInvoiceRequest{Buyer: "", FaceValue: "1000", DueDate: futureDueDate()},
 			wantStatus: http.StatusBadRequest,
-			wantMsg:    "missing required invoice parameters",
+			wantMsg:    "invalid buyer address: value is required",
 		},
 		{
 			name:       "missing face value",
@@ -84,12 +122,36 @@ func TestValidateCreateInvoiceRequest(t *testing.T) {
 			wantMsg:    "missing required invoice parameters",
 		},
 		{
-			name:       "invalid buyer address",
+			name:       "malformed buyer address",
 			issuer:     issuer.Address(),
 			withIssuer: true,
 			body:       createInvoiceRequest{Buyer: "not-a-stellar-address", FaceValue: "1000", DueDate: futureDueDate()},
 			wantStatus: http.StatusBadRequest,
-			wantMsg:    "invalid buyer address",
+			wantMsg:    "invalid buyer address: malformed Stellar StrKey",
+		},
+		{
+			name:       "buyer bad checksum",
+			issuer:     issuer.Address(),
+			withIssuer: true,
+			body:       createInvoiceRequest{Buyer: corruptStrkeyChecksum(buyer.Address()), FaceValue: "1000", DueDate: futureDueDate()},
+			wantStatus: http.StatusBadRequest,
+			wantMsg:    "invalid buyer address: malformed Stellar StrKey",
+		},
+		{
+			name:       "contract buyer in account field",
+			issuer:     issuer.Address(),
+			withIssuer: true,
+			body:       createInvoiceRequest{Buyer: testContractAddress(t), FaceValue: "1000", DueDate: futureDueDate()},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantMsg:    "invalid buyer address: expected a Stellar account address (G...)",
+		},
+		{
+			name:       "buyer seed in public-key field",
+			issuer:     issuer.Address(),
+			withIssuer: true,
+			body:       createInvoiceRequest{Buyer: buyer.Seed(), FaceValue: "1000", DueDate: futureDueDate()},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantMsg:    "invalid buyer address: expected a Stellar account address (G...)",
 		},
 		{
 			name:       "zero face value",

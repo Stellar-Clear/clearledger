@@ -33,6 +33,13 @@ type DbInvoice struct {
 	AttestedAt         *int64  `json:"attested_at"`
 }
 
+// InvoiceCursor identifies the final row of a page ordered by created_at and
+// ID. The pair gives the cursor a stable position when rows share timestamps.
+type InvoiceCursor struct {
+	CreatedAt int64  `json:"created_at"`
+	ID        string `json:"id"`
+}
+
 type DbPoolStats struct {
 	TotalDeposits         string    `json:"total_deposits"`
 	TotalFunded           string    `json:"total_funded"`
@@ -167,9 +174,16 @@ func GetInvoiceByID(ctx context.Context, q Querier, id string) (*DbInvoice, erro
 }
 
 func GetInvoicesPage(ctx context.Context, status, issuer string, limit, offset int) ([]*DbInvoice, int, error) {
-	predicates := make([]string, 0, 2)
-	filterArgs := make([]any, 0, 2)
+	invoices, total, _, err := GetFilteredInvoicesPage(ctx, status, issuer, "", nil, limit, offset, nil)
+	return invoices, total, err
+}
 
+// GetFilteredInvoicesPage applies invoice filters and returns a bounded page.
+// When cursor is non-nil, it takes precedence over offset pagination and
+// returns hasMore for building the next cursor.
+func GetFilteredInvoicesPage(ctx context.Context, status, issuer, buyer string, dueDate *int64, limit, offset int, cursor *InvoiceCursor) ([]*DbInvoice, int, bool, error) {
+	predicates := make([]string, 0, 5)
+	filterArgs := make([]any, 0, 5)
 	if status != "" {
 		predicates = append(predicates, fmt.Sprintf("status = $%d", len(filterArgs)+1))
 		filterArgs = append(filterArgs, status)
@@ -177,6 +191,14 @@ func GetInvoicesPage(ctx context.Context, status, issuer string, limit, offset i
 	if issuer != "" {
 		predicates = append(predicates, fmt.Sprintf("issuer = $%d", len(filterArgs)+1))
 		filterArgs = append(filterArgs, issuer)
+	}
+	if buyer != "" {
+		predicates = append(predicates, fmt.Sprintf("buyer = $%d", len(filterArgs)+1))
+		filterArgs = append(filterArgs, buyer)
+	}
+	if dueDate != nil {
+		predicates = append(predicates, fmt.Sprintf("due_date = $%d", len(filterArgs)+1))
+		filterArgs = append(filterArgs, *dueDate)
 	}
 
 	whereClause := ""
@@ -187,11 +209,21 @@ func GetInvoicesPage(ctx context.Context, status, issuer string, limit, offset i
 	countQuery := "SELECT COUNT(*) FROM invoices" + whereClause
 	var total int
 	if err := Pool.QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("queries: count invoices: %w", err)
+		return nil, 0, false, fmt.Errorf("queries: count invoices: %w", err)
 	}
 
 	limitPlaceholder := len(filterArgs) + 1
-	offsetPlaceholder := len(filterArgs) + 2
+	queryArgs := append([]any{}, filterArgs...)
+	if cursor != nil {
+		predicates = append(predicates, fmt.Sprintf("(created_at, id) < ($%d, $%d)", len(queryArgs)+1, len(queryArgs)+2))
+		queryArgs = append(queryArgs, cursor.CreatedAt, cursor.ID)
+	}
+	whereClause = ""
+	if len(predicates) > 0 {
+		whereClause = " WHERE " + strings.Join(predicates, " AND ")
+	}
+	limitPlaceholder = len(queryArgs) + 1
+	queryArgs = append(queryArgs, limit+1)
 	query := fmt.Sprintf(`
 		SELECT 
 			id, issuer, buyer, face_value, discount_bps, funded_amount, due_date, status, created_at,
@@ -199,13 +231,17 @@ func GetInvoicesPage(ctx context.Context, status, issuer string, limit, offset i
 			attestation_agent_id, risk_score_bps, evidence_hash, attested_at
 		FROM invoices%s
 		ORDER BY created_at DESC, id DESC
-		LIMIT $%d OFFSET $%d
-	`, whereClause, limitPlaceholder, offsetPlaceholder)
-	queryArgs := append(append([]any{}, filterArgs...), limit, offset)
+		LIMIT $%d
+	`, whereClause, limitPlaceholder)
+	if cursor == nil {
+		offsetPlaceholder := len(queryArgs) + 1
+		query += fmt.Sprintf(" OFFSET $%d", offsetPlaceholder)
+		queryArgs = append(queryArgs, offset)
+	}
 
 	rows, err := Pool.Query(ctx, query, queryArgs...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("queries: get invoices: %w", err)
+		return nil, 0, false, fmt.Errorf("queries: get invoices: %w", err)
 	}
 	defer rows.Close()
 
@@ -218,14 +254,18 @@ func GetInvoicesPage(ctx context.Context, status, issuer string, limit, offset i
 			&inv.IssuerConfirmed, &inv.BuyerConfirmed, &inv.BuyerConfirmedAt, &inv.RepaidAt,
 			&inv.AttestationAgentID, &inv.RiskScoreBps, &inv.EvidenceHash, &inv.AttestedAt,
 		); err != nil {
-			return nil, 0, fmt.Errorf("queries: scan invoice: %w", err)
+			return nil, 0, false, fmt.Errorf("queries: scan invoice: %w", err)
 		}
 		invoices = append(invoices, &inv)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("queries: iterate invoices: %w", err)
+		return nil, 0, false, fmt.Errorf("queries: iterate invoices: %w", err)
 	}
-	return invoices, total, nil
+	hasMore := len(invoices) > limit
+	if hasMore {
+		invoices = invoices[:limit]
+	}
+	return invoices, total, hasMore, nil
 }
 
 func UpdateInvoiceListed(ctx context.Context, q Querier, id string, status string, discountBps int) error {
@@ -525,6 +565,36 @@ func GetRecentEvents(ctx context.Context, limit int) ([]*EventLog, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("queries: iterate events: %w", err)
+	}
+	return events, nil
+}
+
+// GetRecentEventsPage returns events before the supplied stable tuple cursor.
+// The cursor uses the same ledger_closed_at/id ordering as the initial page.
+func GetRecentEventsPage(ctx context.Context, limit int, beforeTimestamp int64, beforeID int) ([]*EventLog, error) {
+	query := `
+		SELECT id, event_id, contract_id, ledger, ledger_closed_at, event_type, data
+		FROM events_log
+		WHERE (ledger_closed_at, id) < ($1, $2)
+		ORDER BY ledger_closed_at DESC, id DESC
+		LIMIT $3
+	`
+	rows, err := Pool.Query(ctx, query, beforeTimestamp, beforeID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("queries: get recent events page: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]*EventLog, 0, limit)
+	for rows.Next() {
+		var ev EventLog
+		if err := rows.Scan(&ev.ID, &ev.EventID, &ev.ContractID, &ev.Ledger, &ev.LedgerClosedAt, &ev.EventType, &ev.Data); err != nil {
+			return nil, fmt.Errorf("queries: scan event page: %w", err)
+		}
+		events = append(events, &ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("queries: iterate event page: %w", err)
 	}
 	return events, nil
 }

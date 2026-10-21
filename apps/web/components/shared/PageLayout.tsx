@@ -1,5 +1,7 @@
 import React from "react";
 import { Navbar } from "./Navbar";
+import { XlmFeeGuidance } from "./XlmFeeGuidance";
+import { TestnetOnlyBanner } from "./TestnetOnlyBanner";
 
 interface PageLayoutProps {
   children: React.ReactNode;
@@ -12,6 +14,8 @@ export function PageLayout({ children }: PageLayoutProps) {
       <div className="absolute bottom-[-10%] right-[-10%] w-[55%] h-[55%] rounded-full bg-indigo-900/10 blur-[130px] pointer-events-none" />
 
       <Navbar />
+      <XlmFeeGuidance />
+      <TestnetOnlyBanner />
 
       <main
         id="main-content"

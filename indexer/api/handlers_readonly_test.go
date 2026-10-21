@@ -176,8 +176,8 @@ func TestHandleGetInvoiceByID_InternalErrorDoesNotLeakErrorText(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "failed to retrieve invoice") {
 		t.Fatalf("expected generic failure message, got %q", rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "request id:") {
-		t.Fatalf("expected a request id in the response, got %q", rr.Body.String())
+	if rr.Header().Get("Content-Type") != "application/json" || !strings.Contains(rr.Body.String(), `"code":"internal_error"`) {
+		t.Fatalf("expected JSON internal_error envelope, got %q", rr.Body.String())
 	}
 }
 

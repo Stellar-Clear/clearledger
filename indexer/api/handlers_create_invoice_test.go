@@ -130,6 +130,81 @@ func TestHandleCreateInvoice_FaceValueExceedsU128(t *testing.T) {
 	}
 }
 
+func TestHandleCreateInvoice_InvalidAddressDoesNotReachBuilder(t *testing.T) {
+	h := newTestHandler(t)
+	issuer, err := keypair.Random()
+	if err != nil {
+		t.Fatalf("generate issuer keypair: %v", err)
+	}
+	buyer, err := keypair.Random()
+	if err != nil {
+		t.Fatalf("generate buyer keypair: %v", err)
+	}
+
+	var rpcCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rpcCalls.Add(1)
+		http.Error(w, "builder should not be reached", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	h.cfg.SorobanRPCURL = server.URL
+
+	tests := []struct {
+		name       string
+		issuer     string
+		buyer      string
+		wantStatus int
+	}{
+		{
+			name:       "contract buyer",
+			issuer:     issuer.Address(),
+			buyer:      testContractAddress(t),
+			wantStatus: http.StatusUnprocessableEntity,
+		},
+		{
+			name:       "buyer bad checksum",
+			issuer:     issuer.Address(),
+			buyer:      corruptStrkeyChecksum(buyer.Address()),
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "contract issuer",
+			issuer:     testContractAddress(t),
+			buyer:      buyer.Address(),
+			wantStatus: http.StatusUnprocessableEntity,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := invoiceRequest(t, h, tt.issuer, tt.buyer, "1000", futureDueDate())
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("got status %d, want %d; body: %s", recorder.Code, tt.wantStatus, recorder.Body.String())
+			}
+		})
+	}
+
+	if rpcCalls.Load() != 0 {
+		t.Fatalf("invalid addresses reached the transaction builder: %d RPC calls", rpcCalls.Load())
+	}
+}
+
+func TestHandleCreateInvoice_WrongVersionBuyerReturns422(t *testing.T) {
+	h := newTestHandler(t)
+	issuer, err := keypair.Random()
+	if err != nil {
+		t.Fatalf("generate issuer keypair: %v", err)
+	}
+
+	recorder := invoiceRequest(t, h, issuer.Address(), testContractAddress(t), "1000", futureDueDate())
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("got status %d, want %d; body: %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "invalid buyer address") {
+		t.Fatalf("expected field-specific buyer error, got %q", recorder.Body.String())
+	}
+}
+
 func TestHandleCreateInvoice_SorobanRPCFailure(t *testing.T) {
 	h := newTestHandler(t)
 	issuer, err := keypair.Random()

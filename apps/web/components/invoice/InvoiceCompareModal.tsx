@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React from "react";
 import { Invoice } from "@/types";
 import { formatAmount } from "@/lib/assets";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
@@ -136,19 +136,11 @@ export function InvoiceCompareModal({
   invoices,
   onClose,
 }: InvoiceCompareModalProps) {
-  const modalRef = useFocusTrap<HTMLDivElement>(true, onClose);
+  const modalRef = useFocusTrap<HTMLDivElement>(true, onClose, {
+    inertBackground: true,
+  });
   const [scrollOffset, setScrollOffset] = React.useState(0);
   const maxScroll = Math.max(0, invoices.length - 4);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
 
   const visibleInvoices = invoices.slice(scrollOffset, scrollOffset + 4);
 

@@ -7,6 +7,9 @@ The OpenAPI 3.0 specification for the Go indexer/API lives in [`indexer.yaml`](.
 | Method | Path                       | Auth | Description                       |
 | ------ | -------------------------- | ---- | --------------------------------- |
 | GET    | `/health`                  | None | Health check                      |
+| GET    | `/live`                    | None | Process liveness                  |
+| GET    | `/ready`                   | None | PostgreSQL, Soroban, and listener readiness |
+| GET    | `/diagnostics`             | JWT  | API connection diagnostics        |
 | GET    | `/metrics`                 | None | Prometheus metrics                |
 | GET    | `/auth`                    | None | Create SEP-10 challenge           |
 | POST   | `/auth`                    | None | Exchange signed challenge for JWT |
@@ -20,6 +23,7 @@ The OpenAPI 3.0 specification for the Go indexer/API lives in [`indexer.yaml`](.
 | GET    | `/pool/position/{address}` | None | LP position by address            |
 | POST   | `/webhooks`                | JWT  | Create webhook subscription       |
 | GET    | `/webhooks`                | JWT  | List webhook subscriptions        |
+| POST   | `/webhooks/{id}/rotate`    | JWT  | Rotate webhook signing secret     |
 | DELETE | `/webhooks/{id}`           | JWT  | Delete webhook subscription       |
 
 ## Linting

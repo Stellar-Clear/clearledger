@@ -106,6 +106,13 @@ X-ClearLedger-Signature: sha256=<hex_digest>
 X-ClearLedger-Timestamp: <unix_timestamp>
 ```
 
+While a subscription is inside a rotation overlap window, deliveries also
+carry the previous key's signature:
+
+```
+X-ClearLedger-Signature-Previous: sha256=<hex_digest>
+```
+
 - The signature is `HMAC_SHA256(secret, timestamp + "." + body)`, where `body`
   is the exact request body bytes and `timestamp` is the `X-ClearLedger-Timestamp`
   header value.
@@ -113,6 +120,10 @@ X-ClearLedger-Timestamp: <unix_timestamp>
 - The timestamp is Unix time in **seconds** at the moment of the attempt. Every
   retry is signed again with a fresh timestamp, so a retried delivery still
   passes a tolerance check.
+- `X-ClearLedger-Signature` always uses the active secret.
+  `X-ClearLedger-Signature-Previous` is present only while the previous secret
+  is inside its overlap window; it is absent for subscriptions that have never
+  been rotated and after [`previous_signing_secret_expires_at`](#rotating-signing-secrets).
 
 #### Verifying signatures
 
@@ -124,6 +135,12 @@ Verify every request before trusting it:
    from your clock, in either direction.
 3. Recompute `sha256=` + hex(HMAC-SHA256(secret, timestamp + "." + body)) and
    compare it to `X-ClearLedger-Signature` in constant time.
+4. During a rotation, accept either the active secret **or** the previous
+   secret until the announced overlap expiry. Check
+   `X-ClearLedger-Signature-Previous` with the previous secret as well; a
+   request is valid if either header verifies. After the expiry, ignore the
+   previous secret completely, including a captured signature that was valid
+   before it expired.
 
 Node.js (Express):
 
@@ -217,7 +234,103 @@ harmless.
 subscription is created (see [Subscription Management](#subscription-management)),
 not at delivery time. Plain `http://` is accepted, so use an `https://`
 endpoint, keep the signing secret out of source control and logs, and rotate it
-if it leaks.
+if it leaks (see [Rotating signing secrets](#rotating-signing-secrets)).
+
+### Rotating signing secrets
+
+Rotation is two-key and time-bounded: the new key becomes active immediately,
+and the old key remains a valid *verification* key until its overlap window
+expires. The indexer never stops signing, so subscribers can deploy the new
+secret without a delivery gap. Three storage columns hold the state:
+
+| Storage columns | Meaning |
+| --------------- | ------- |
+| `signing_secret` | Active key. Always signs `X-ClearLedger-Signature` and is always accepted. |
+| `previous_signing_secret` | Key that was active before the last rotation. Valid only until the adjacent expiry. |
+| `previous_signing_secret_expires_at` | End of the overlap window. At/after this instant the previous key is rejected. |
+
+A subscription with no rotation in progress has both previous columns `NULL`.
+The overlap defaults to `WEBHOOK_SECRET_OVERLAP` (24h) and is capped at 30 days;
+per-request `overlap_seconds` can only shorten or lengthen it inside that cap.
+
+**Storage migration note.** Migration
+`014_add_webhook_secret_rotation.sql` only adds the two nullable columns and a
+check constraint. Existing rows need no backfill: `signing_secret` stays active
+and there is no previous key until the first rotation. Rolling this out is
+backwards compatible with deliveries already in the queue; they are signed with
+whatever key is active when the worker claims them.
+
+**Trust boundary.** The rotation API is `POST /webhooks/{id}/rotate`, protected
+by the same JWT middleware as the other `/webhooks` routes. The database update
+is scoped to the authenticated `user_address`, so a subscriber can rotate only
+its own subscription; an unknown id and someone else's id both return `404` to
+avoid confirming that another subscriber exists. The new secret is generated
+server-side with 32 random bytes, returned **once** in the response, and never
+logged. `overlap_seconds` is deliberately not a secret-transfer mechanism:
+deliver the new secret to the subscriber over your existing secure channel. An
+operator with database access can apply the same state with the SQL below; that
+is the admin/break-glass path and bypasses the API's authentication boundary,
+so treat database credentials as equivalent to every subscription's signing
+key.
+
+**Procedure (no delivery gap):**
+
+1. **Pre-deploy the receiver change.** The subscriber updates its verifier to
+   check `X-ClearLedger-Signature` against the active secret and, when present,
+   `X-ClearLedger-Signature-Previous` against the previous secret. Accept a
+   request if either verifies while the overlap is open. Do not make this
+   deploy and the rotation atomic; the old secret still signs the main header
+   until step 2, so step 1 is safe to roll out early.
+2. **Rotate.** The subscriber (or an authorized operator holding the
+   subscriber's JWT) calls:
+   ```http
+   POST /webhooks/{id}/rotate
+   Authorization: Bearer <jwt>
+   Content-Type: application/json
+
+   {"overlap_seconds": 86400}
+   ```
+   The response contains the new `secret`. The old key moves to
+   `previous_signing_secret` with `previous_signing_secret_expires_at =
+   now + overlap`. At this point the main header uses the new key and the
+   `-Previous` header uses the old key.
+3. **Install the new secret** at the receiver. Until it does, the receiver can
+   still authenticate via the `-Previous` header, so deliveries keep working.
+4. **Verify, then let the window close.** Once the receiver verifies the main
+   header with the new secret, no action is needed: after the overlap expiry
+   the worker stops sending the `-Previous` header and
+   `VerifySignature`/`VerificationSecrets` reject the old key. It also rejects
+   a replay of a previously captured old-key signature after that instant.
+5. **Rotate again** only after the old window has expired. A second rotation
+   inside the window returns `409 Conflict`; it would discard a key the
+   subscriber may still be relying on.
+
+**Rollback.** Because both keys verify during the window, a bad rollout is not
+a delivery outage. To return the old key to active immediately, either rotate
+again after the window expires with the old key (the API path), or, as the
+break-glass admin path, swap the columns in a transaction:
+
+```sql
+BEGIN;
+SELECT signing_secret, previous_signing_secret
+FROM webhook_subscriptions WHERE id = '<subscription-id>' FOR UPDATE;
+
+UPDATE webhook_subscriptions
+SET signing_secret = previous_signing_secret,
+    previous_signing_secret = signing_secret,
+    previous_signing_secret_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 hour',
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = '<subscription-id>';
+COMMIT;
+```
+
+Never paste real secrets into a shell history, ticket, or log. Prefer the API
+and a secret manager; the SQL form exists so an operator can recover when the
+API or a receiver deployment is unavailable.
+
+The receiver-side helper is implemented in
+`indexer/webhooks/signature.go` and covered by
+`indexer/webhooks/signature_rotation_test.go`.
 
 ### Delivery Semantics
 
@@ -236,8 +349,15 @@ What a receiver sees, per attempt:
   turns the `POST` into a `GET` without a body, so register the final URL.
 - **Response storage:** on success, up to the first 4096 bytes of your response
   body are stored in `webhook_deliveries.last_response`. On failure only the
-  status code (`last_status`) and an error message (`last_error`, for example
-  `non-2xx response: 500`) are stored.
+  status code (`last_status`) and a minimal error message (`last_error`, for
+  example `non-2xx response: 500`) are stored. Failure response bodies are
+  untrusted and are never copied into `last_error`.
+- **Trust boundary for `last_error`:** `last_error` is an operator-facing
+  diagnostic, not a copy of the request. Before it is persisted, the delivery
+  worker redacts the endpoint URL (which may contain an API key in its path or
+  query string), the subscription's signing secret, and any other bare URL, then
+  caps the value at 1024 bytes. Never rely on `last_error` to carry provider
+  credentials, tokens, or the subscriber's response body.
 - **Ordering and duplicates:** delivery is at-least-once, and deliveries are
   not ordered. The queue holds at most one row per subscription and `event_id`,
   but that row can be sent more than once (see
@@ -253,7 +373,10 @@ What happens in the queue:
   A new delivery is first attempted on the next poll after the event is indexed.
 - `webhook_deliveries.status` is `pending` while a delivery is waiting for its
   first attempt or a retry, `delivered` after a `2xx`, and `dead_letter` once
-  retries are exhausted. Dead-lettered rows are never retried automatically.
+  retries are exhausted. `terminal_status` mirrors the final value and is
+  `NULL` while pending, so a single column answers "is this row finished?".
+  Dead-lettered rows are never retried automatically, and delivered rows are
+  never returned to the queue even if a duplicate or late outcome is recorded.
 - Delivery rows are only created for subscriptions that are active when the
   event is indexed. Rows whose subscription is later set to `active = false`
   are not attempted; they stay `pending` until it is re-activated.
@@ -308,6 +431,10 @@ environment.
 A delivery gets **5 attempts**: the first attempt plus 4 retries with
 exponential backoff.
 
+For the operational procedure to inspect and manually replay `pending` or
+`dead_letter` rows, see the
+[Indexer Operations Runbook](developer-guide/indexer-operations.md#5-webhook-replay-for-failed-subscribers).
+
 | Attempt | When                                              |
 | ------- | ------------------------------------------------- |
 | 1       | On the next poll after the event is indexed       |
@@ -318,15 +445,26 @@ exponential backoff.
 | —       | Attempt 5 fails: marked `dead_letter`, no retries |
 
 - The delay after the _n_-th failed attempt is `10s × 2^n`
-  (`backoffBase * (1 << nextAttempt)` in `indexer/webhooks/worker.go`).
+  (`backoffBase * (1 << nextAttempt)` in `indexer/webhooks/worker.go`), capped
+  at **15 minutes**. Together with the attempt cap this keeps the schedule
+  finite for every row.
 - A retry runs on the first poll after its scheduled time, so it can start up to
   one poll interval (5s) later than listed.
 - The limit comes from the `webhook_deliveries.max_attempts` column (default
   `5`, set per delivery row by migration `009_add_webhook_subscriptions.sql`),
-  not from `WorkerConfig.MaxAttempts`.
-- A dead-lettered row shows `attempts = 4`: the counter records the failures
-  that were scheduled for a retry, and the final failure sets the status without
-  incrementing it.
+  not from `WorkerConfig.MaxAttempts`. The worker and the `Mark*` helpers clamp
+  it to `1..20` (`db.MaxDeliveryAttempts`), so a malformed row cannot retry
+  forever.
+- `attempt_count` records every attempt, including the terminal failure, so a
+  dead-lettered row shows `attempt_count = 5` (the legacy `attempts` column is
+  kept in sync for older readers).
+- `next_attempt_at` is updated only for a retry; terminal rows keep their last
+  value but are excluded from claiming by `status`/`terminal_status`.
+- Outcome writes are idempotent and compare-and-set on the persisted attempt
+  count: a duplicate success or a stale failure callback cannot increment the
+  counter twice or move a terminal row back to `pending`.
+- If a worker dies after claiming, `locked_until` expires and the row is
+  reclaimed with the same `attempt_count`; claiming itself is not an attempt.
 
 ### Subscription Management
 
@@ -334,11 +472,16 @@ Subscriptions are created, listed and deleted through the indexer's
 `/webhooks` routes; see the [API reference](./openapi/README.md). Underneath,
 two tables hold the state:
 
-- `webhook_subscriptions`: Stores subscriber URLs, event types, secrets, and active status
+- `webhook_subscriptions`: Stores subscriber URLs, event types, the active
+  signing secret, the optional previous secret plus its overlap expiry (see
+  [Rotating signing secrets](#rotating-signing-secrets)), and active status.
 - `webhook_deliveries`: Tracks delivery attempts, status, and responses.
   `locked_until` holds the current claim (see
   [Delivery Guarantees](#delivery-guarantees)) and is `NULL` when the row is
   free; migration `010_add_webhook_delivery_locking.sql` added the column.
+  Migration `015_add_webhook_delivery_attempt_tracking.sql` added
+  `attempt_count` and `terminal_status`, backfilled them from `attempts` and
+  `status`, and keeps the legacy columns synchronized during rolling deploys.
 
 ## Implementation Details
 
@@ -347,6 +490,7 @@ The webhook system was implemented in three phases:
 1. **Payload Schema** (#804): Defined versioned JSON envelope and event types in `indexer/webhooks/payload.go`
 2. **Subscriptions Table** (#805): Added database schema and Go accessors in `indexer/db/webhooks.go` and migration `009_add_webhook_subscriptions.sql`
 3. **Delivery Worker** (#806): Background worker with signing, retry, and dead-letter handling in `indexer/webhooks/worker.go`
+4. **Overlapping key rotation** (#120): Previous-key storage and grace expiry in migration `014_add_webhook_secret_rotation.sql`, the rotation path in `indexer/db/webhooks.go` and `POST /webhooks/{id}/rotate`, and dual-key verification in `indexer/webhooks/signature.go`.
 
 At runtime, in `indexer/main.go`:
 

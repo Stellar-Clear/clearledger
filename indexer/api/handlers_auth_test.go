@@ -63,6 +63,31 @@ func TestHandleGetAuth_InvalidAddress(t *testing.T) {
 	}
 }
 
+// TestHandleGetAuth_RejectsWrongVersionAddress expects 422 when a valid StrKey
+// uses the wrong version for a signing account (C... contract or S... seed).
+func TestHandleGetAuth_RejectsWrongVersionAddress(t *testing.T) {
+	h := newTestHandler(t)
+	seedKP, _ := keypair.Random()
+
+	for name, address := range map[string]string{
+		"contract": testContractAddress(t),
+		"seed":     seedKP.Seed(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/auth?address="+address, nil)
+			w := httptest.NewRecorder()
+			h.HandleGetAuth(w, req)
+
+			if w.Code != http.StatusUnprocessableEntity {
+				t.Errorf("got status %d, want %d; body: %s", w.Code, http.StatusUnprocessableEntity, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), "invalid address") {
+				t.Errorf("expected field-specific address error, got %q", w.Body.String())
+			}
+		})
+	}
+}
+
 // TestHandleGetAuth_ValidAddress expects 200 and a JSON body with "transaction" and
 // "network_passphrase" fields.
 func TestHandleGetAuth_ValidAddress(t *testing.T) {

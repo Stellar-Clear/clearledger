@@ -20,7 +20,7 @@ describe("toast accessibility", () => {
     errorMock.mockClear();
   });
 
-  it("marks success toast content atomic and adds a screen-reader prefix", () => {
+  it("announces success through a polite live region", () => {
     showSuccessToast("Deposit Complete", "abc123");
 
     expect(successMock).toHaveBeenCalledTimes(1);
@@ -28,9 +28,12 @@ describe("toast accessibility", () => {
     const [content, options] = successMock.mock.calls[0];
     const { container } = render(<>{content}</>);
 
-    const text = screen.getByText("Deposit Complete").closest("div");
-    expect(text).toHaveAttribute("aria-atomic", "true");
-    expect(container.querySelector(".sr-only")).toHaveTextContent("Success:");
+    const status = screen.getByRole("status");
+    expect(status).toHaveAttribute("aria-live", "polite");
+    expect(status).toHaveAttribute("aria-atomic", "true");
+    expect(container.querySelector(".sr-only")).toHaveTextContent(
+      "Transaction confirmed",
+    );
     expect(
       screen.getByRole("link", { name: /view on stellar expert/i }),
     ).toHaveAttribute(
@@ -40,7 +43,7 @@ describe("toast accessibility", () => {
     expect(options).toMatchObject({ duration: 5000 });
   });
 
-  it("marks error toast content atomic and adds a screen-reader prefix", () => {
+  it("announces failures through an assertive live region", () => {
     showErrorToast("Withdrawal Failed", new Error("Insufficient balance"));
 
     expect(errorMock).toHaveBeenCalledTimes(1);
@@ -48,9 +51,12 @@ describe("toast accessibility", () => {
     const [content, options] = errorMock.mock.calls[0];
     const { container } = render(<>{content}</>);
 
-    const text = screen.getByText("Withdrawal Failed").closest("div");
-    expect(text).toHaveAttribute("aria-atomic", "true");
-    expect(container.querySelector(".sr-only")).toHaveTextContent("Error:");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveAttribute("aria-live", "assertive");
+    expect(alert).toHaveAttribute("aria-atomic", "true");
+    expect(container.querySelector(".sr-only")).toHaveTextContent(
+      "Transaction failed",
+    );
     expect(screen.getByText("Insufficient balance")).toBeInTheDocument();
     expect(options).toMatchObject({ duration: 6000 });
   });

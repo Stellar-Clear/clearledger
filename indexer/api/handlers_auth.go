@@ -1,25 +1,22 @@
 package api
 
 import (
-	"fmt"
+	"log/slog"
 	"net/http"
 
 	"clearledger/indexer/auth"
-
-	"github.com/stellar/go-stellar-sdk/keypair"
 )
 
 // GET /auth
 func (h *APIHandler) HandleGetAuth(w http.ResponseWriter, r *http.Request) {
 	address := r.URL.Query().Get("address")
 	if address == "" {
-		http.Error(w, "missing address parameter", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "missing address parameter")
 		return
 	}
 
-	_, err := keypair.Parse(address)
-	if err != nil {
-		http.Error(w, "invalid address format", http.StatusBadRequest)
+	if err := validateAccountAddressField("address", address); err != nil {
+		writeHTTPError(w, r, err)
 		return
 	}
 
@@ -47,19 +44,24 @@ func (h *APIHandler) HandlePostAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.Transaction == "" {
-		http.Error(w, "missing transaction parameter", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "missing transaction parameter")
 		return
 	}
 
 	clientAddr, err := auth.VerifyChallenge(body.Transaction, h.serverKP, h.cfg.NetworkPassphrase)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("challenge verification failed: %s", err.Error()), http.StatusUnauthorized)
+		slog.WarnContext(r.Context(), "challenge verification failed", "error", err)
+		writeAPIError(w, r, http.StatusUnauthorized, "challenge verification failed")
+		return
+	}
+	if !h.claimChallenge(body.Transaction) {
+		http.Error(w, "challenge has already been used", http.StatusUnauthorized)
 		return
 	}
 
 	token, err := auth.GenerateJWT(clientAddr, h.cfg.JWTSecret, h.cfg.JWTExpiryHours)
 	if err != nil {
-		http.Error(w, "failed to generate authentication token", http.StatusInternalServerError)
+		internalError(w, r, "failed to generate authentication token", err)
 		return
 	}
 

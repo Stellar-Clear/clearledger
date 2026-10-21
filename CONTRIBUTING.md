@@ -17,9 +17,12 @@ Thank you for your interest in contributing to ClearLedger! To maintain code qua
 Before opening or requesting review of a pull request, confirm the following:
 
 - [ ] Code compiles without errors (`pnpm build` / `go build -v .`)
+- [ ] Generated SDK artifacts are current (`pnpm check:sdk-artifacts`)
 - [ ] TypeScript type-checking passes with no errors (`pnpm typecheck`)
 - [ ] Linting passes (`pnpm --filter web lint` / `go vet ./...` and `golangci-lint run`)
+- [ ] Translation catalogs are complete (`pnpm check:translations`)
 - [ ] All existing and new tests pass (`pnpm test` / `go test -race ./...`)
+- [ ] Internal Markdown links pass (`pnpm check:links`)
 - [ ] No `TODO`, stub, or placeholder code is present
 - [ ] TypeScript changes use strict types (no `any`)
 - [ ] New Go code is formatted with `gofmt`
@@ -30,7 +33,7 @@ Before opening or requesting review of a pull request, confirm the following:
 
 ## Test command coverage
 
-`pnpm build` covers `@clearledger/sdk`, `@clearledger/sdk-react`, `@clearledger/cli`, and `web`. `pnpm test` runs the Vitest suites for those four packages; it does not run Go tests. `pnpm lint` covers SDK and web, while `pnpm typecheck` builds SDK, SDK React, and CLI before checking TypeScript across the workspaces.
+`pnpm build` covers `@clearledger/sdk`, `@clearledger/sdk-react`, `@clearledger/cli`, and `web`. `pnpm check:sdk-artifacts` verifies that each SDK package's `main`, `types`, `bin`, and `exports` targets exist and are newer than their TypeScript inputs; it exits non-zero with the package to rebuild when they are missing or stale. `pnpm test:scripts` runs the tests for the workspace check itself. `pnpm test` runs the Vitest suites for the four packages; it does not run Go tests. `pnpm lint` covers SDK and web, while `pnpm typecheck` builds SDK, SDK React, and CLI before checking TypeScript across the workspaces.
 
 Vitest reports `Test Files` and `Tests` (the counts vary by package and checkout). For example:
 
@@ -52,6 +55,22 @@ ok   clearledger/indexer/config   0.018s
 ```
 
 Database integration tests require `TEST_DATABASE_URL`; for Docker Compose use `postgres://postgres:<POSTGRES_PASSWORD>@localhost:5433/postgres?sslmode=disable`. Without that variable, those tests are skipped.
+
+## Documentation links
+
+CI checks every tracked Markdown file for broken relative links and images, missing local files and directories, and invalid heading anchors. External `http(s)` and `mailto` links are not checked.
+
+Run the same check locally before opening a PR:
+
+```bash
+pnpm check:links
+```
+
+The checker prints each failure as `source:line -> broken target` and exits non-zero when any link is broken. Its own tests cover a valid document, a missing file and a missing anchor:
+
+```bash
+pnpm test:links
+```
 
 ## Git Workflow Guidelines
 
@@ -85,6 +104,9 @@ Verify compilation across all monorepo packages before submitting code:
 # Build all TypeScript workspace packages
 pnpm install
 pnpm build
+
+# Verify generated entrypoints exist and match the current sources
+pnpm check:sdk-artifacts
 
 # Compile Go Indexer
 cd indexer
@@ -126,14 +148,21 @@ The test suite is split across two runtimes. Both must pass before opening a PR.
 # Run all TypeScript workspace tests
 pnpm test
 
+# Run the workspace script tests
+pnpm test:scripts
+
 # Run frontend tests only
 pnpm --filter web test
 
 # Run SDK tests only
 pnpm --filter @clearledger/sdk test
+
+# Check translation catalogs and the checker's fixtures
+pnpm check:translations
+pnpm --filter web test:translations
 ```
 
-> **Note:** `pnpm test` runs the `@clearledger/sdk`, `@clearledger/sdk-react`, `@clearledger/cli`, and web Vitest suites. It does **not** run Go tests.
+> **Note:** `pnpm test` runs the `@clearledger/sdk`, `@clearledger/sdk-react`, `@clearledger/cli`, and web Vitest suites. It does **not** run Go tests. UI copy lives in the next-intl catalogs under `apps/web/messages`; see the [i18n guide](docs/developer-guide/i18n.md) before adding a locale or a new message.
 
 **Go tests** (indexer, run from the `indexer/` directory):
 

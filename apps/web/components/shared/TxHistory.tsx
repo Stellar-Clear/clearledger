@@ -14,6 +14,7 @@ import { SkeletonShimmer } from "./SkeletonLoader";
 
 interface TxHistoryProps {
   address: string;
+  poolOnly?: boolean;
 }
 
 function TxRowSkeleton() {
@@ -34,7 +35,7 @@ function TxRowSkeleton() {
   );
 }
 
-export function TxHistory({ address }: TxHistoryProps) {
+export function TxHistory({ address, poolOnly = false }: TxHistoryProps) {
   const {
     transactions,
     isLoading,
@@ -47,6 +48,11 @@ export function TxHistory({ address }: TxHistoryProps) {
     refetch,
   } = useTxHistory(address);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  const visibleTransactions = poolOnly
+    ? transactions.filter(
+        (tx) => tx.type === "Pool Deposit" || tx.type === "Pool Withdraw",
+      )
+    : transactions;
 
   const handleCopy = async (hash: string) => {
     try {
@@ -95,16 +101,18 @@ export function TxHistory({ address }: TxHistoryProps) {
         </div>
       )}
 
-      {!error && !isLoading && transactions.length === 0 && (
+      {!error && !isLoading && visibleTransactions.length === 0 && (
         <p className="text-slate-500 text-sm text-center py-6">
-          No ClearLedger transactions found for this wallet.
+          {poolOnly
+            ? "No pool deposits or withdrawals found for this wallet on this page."
+            : "No ClearLedger transactions found for this wallet."}
         </p>
       )}
 
-      {!error && !isLoading && transactions.length > 0 && (
+      {!error && !isLoading && visibleTransactions.length > 0 && (
         <>
           <div className="space-y-3">
-            {transactions.map((tx) => (
+            {visibleTransactions.map((tx) => (
               <div
                 key={tx.id}
                 className="flex justify-between items-center bg-slate-950/45 border border-slate-900 rounded-xl p-4 transition-all hover:bg-slate-900/60"
