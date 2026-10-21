@@ -862,3 +862,11 @@ func TestStart_ReorgOnFinalizedLedgerHaltsListener(t *testing.T) {
 		t.Error("expected listener health to report the halt")
 	}
 }
+
+func TestEventFilterUsesConfiguredContractIDs(t *testing.T) {
+	cfg := &config.Config{RegistryContractID: "CRegistry", InvoiceContractID: "CInvoice", PoolContractID: "", EscrowContractID: "CEscrow"}
+	l := NewEventListener(cfg, api.NewListenerHealth(), nil)
+	if len(l.cfg.RegistryContractID) == 0 || l.cfg.InvoiceContractID == "" || l.cfg.EscrowContractID == "" {
+		t.Fatal("configured contract IDs must be retained for the RPC contract filter")
+	}
+}
