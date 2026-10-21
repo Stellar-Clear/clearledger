@@ -3,6 +3,9 @@ import { create } from "zustand";
 export interface PendingAction {
   label: string;
   invoiceId: string;
+  contractId?: string;
+  asset?: string;
+  amount?: string;
   fn: () => Promise<void>;
 }
 

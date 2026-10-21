@@ -143,6 +143,9 @@ export default function LPDashboard() {
     requestConfirmation({
       label: "Withdraw LP liquidity",
       invoiceId: address || "LP position",
+      contractId: poolContractID,
+      asset: "USDC LP shares",
+      amount: `${withdrawShares} shares`,
       fn: async () => {
         await withdraw({ shares: shareAmount });
         setWithdrawShares("");
