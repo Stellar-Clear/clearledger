@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toUsdc, fromUsdc } from "./amounts.js";
+import { toUsdc, fromUsdc, MAX_STROOPS, STROOPS_PER_USDC } from "./amounts.js";
 
 describe("toUsdc", () => {
   it('converts 1 USDC (10_000_000 stroops) to "1.00"', () => {
@@ -34,6 +34,16 @@ describe("toUsdc", () => {
 
   it("handles negative fractional amounts", () => {
     expect(toUsdc(BigInt(-10_005_000_000))).toBe("-1000.50");
+  });
+
+  it("formats the maximum u128 stroop amount without losing precision", () => {
+    expect(toUsdc(MAX_STROOPS)).toBe(
+      `${MAX_STROOPS / BigInt(STROOPS_PER_USDC)}.${(MAX_STROOPS % BigInt(STROOPS_PER_USDC)).toString().padStart(7, "0").slice(0, 2)}`,
+    );
+  });
+
+  it("rejects amounts outside the u128 range", () => {
+    expect(() => toUsdc(MAX_STROOPS + 1n)).toThrow(RangeError);
   });
 
   it("rounds down sub-cent remainders", () => {
@@ -89,6 +99,12 @@ describe("fromUsdc", () => {
     expect(() => fromUsdc("abc")).toThrow("Invalid USDC amount");
     expect(() => fromUsdc("1.2.3")).toThrow("Invalid USDC amount");
     expect(() => fromUsdc("")).toThrow("Invalid USDC amount");
+  });
+
+  it("rejects a decimal whose integer value exceeds u128", () => {
+    expect(() => fromUsdc("34028236692093846346337460743176821145")).toThrow(
+      RangeError,
+    );
   });
 });
 
