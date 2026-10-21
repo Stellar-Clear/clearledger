@@ -18,7 +18,7 @@
     "@radix-ui/react-popover": "^1.1.23",
     "@radix-ui/react-slot": "^1.2.5",
     "@stellar/freighter-api": "^2.0.0",
-    "@stellar/stellar-sdk": "^13.3.0",
+    "@stellar/stellar-sdk": "^17.2.1",
     "@tanstack/react-query": "^5.104.1",
     "@tanstack/react-virtual": "^3.14.8",
     "@clearledger/sdk": "workspace:*",
