@@ -57,3 +57,5 @@
 
 - [How to Contribute](contributing/how-to-contribute.md)
 - [Accessibility Statement](ACCESSIBILITY.md)
+
+- [Local full-stack startup](local-full-stack.md)
