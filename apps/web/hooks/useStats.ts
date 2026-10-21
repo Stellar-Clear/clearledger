@@ -30,6 +30,7 @@ export function useStats() {
     stats: query.data,
     isLoading: query.isLoading,
     error: query.error,
+    updatedAt: query.dataUpdatedAt,
     refetch: query.refetch,
   };
 }

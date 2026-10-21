@@ -5,6 +5,56 @@ import { parseProfile } from "../types/schemas.js";
 
 export class RegistryClient extends BaseContractClient {
   /**
+   * Returns the number of registered profiles for a role.
+   * @param role - Registry role to count.
+   * @param signerPublicKey - Public key used for the read simulation.
+   */
+  async roleCount(
+    role: Profile["role"],
+    signerPublicKey: string,
+  ): Promise<number> {
+    return this.readContract(
+      "role_count",
+      [nativeToScVal(role, { type: "symbol" })],
+      signerPublicKey,
+      (val) => Number(scValToNative(val)),
+    );
+  }
+
+  /**
+   * Lists a bounded page of profiles for a role. Limits are capped to keep
+   * RPC simulations predictable.
+   */
+  async listProfiles(
+    role: Profile["role"],
+    offset: number,
+    limit: number,
+    signerPublicKey: string,
+  ): Promise<Profile[]> {
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new RangeError("offset must be a non-negative integer");
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new RangeError("limit must be an integer between 1 and 100");
+    }
+
+    return this.readContract(
+      "list_profiles",
+      [
+        nativeToScVal(role, { type: "symbol" }),
+        nativeToScVal(offset, { type: "u32" }),
+        nativeToScVal(limit, { type: "u32" }),
+      ],
+      signerPublicKey,
+      (val) => {
+        const profiles = scValToNative(val);
+        if (!Array.isArray(profiles)) return [];
+        return profiles.map(parseProfile);
+      },
+    );
+  }
+
+  /**
    * Initializes the registry contract with its admin address.
    * Side effect: stores the admin address on-chain. Can only be called once —
    * a second call panics.

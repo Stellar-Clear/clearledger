@@ -7,7 +7,10 @@ import { useProfile } from "@/hooks/useProfile";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { WalletConnect } from "@/components/shared/WalletConnect";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
-import { TransactionPending } from "@/components/shared/TransactionPending";
+import {
+  TransactionPending,
+  type TransactionPendingState,
+} from "@/components/shared/TransactionPending";
 import { Button } from "@/components/ui/button";
 import {
   ShieldCheck,
@@ -126,6 +129,8 @@ export default function ProfilePage() {
   const [showPending, setShowPending] = useState(false);
   const [pendingHash, setPendingHash] = useState<string | null>(null);
   const [pendingText, setPendingText] = useState("Waiting for confirmation...");
+  const [transactionState, setTransactionState] =
+    useState<TransactionPendingState>("pending");
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,6 +153,7 @@ export default function ProfilePage() {
       `Registering ${regRole === "issuer" ? "SME / issuer" : "buyer"} profile...`,
     );
     setPendingHash(null);
+    setTransactionState("pending");
     setShowPending(true);
 
     try {
@@ -164,12 +170,14 @@ export default function ProfilePage() {
         metadata,
       });
 
+      setTransactionState("confirmed");
       if (typeof txHash === "string") {
         setPendingHash(txHash);
       }
       setShowRegModal(false);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
+      setTransactionState("failed");
       setLocalError(message || "Registration transaction failed");
       setShowPending(false);
     }
@@ -411,7 +419,11 @@ export default function ProfilePage() {
               </div>
 
               {localError && (
-                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-mono p-3 rounded-lg flex items-start gap-2">
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-mono p-3 rounded-lg flex items-start gap-2"
+                >
                   <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
                   <span>{localError}</span>
                 </div>
@@ -541,6 +553,8 @@ export default function ProfilePage() {
           onClose={() => setShowPending(false)}
           statusText={pendingText}
           txHash={pendingHash}
+          state={transactionState}
+          errorText={localError ?? undefined}
         />
       </div>
     </PageLayout>

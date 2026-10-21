@@ -28,7 +28,7 @@ The protocol records submitted transaction state. It does not independently veri
 | `packages/cli/` | Developer command-line tools |
 | `indexer/` | Go Soroban event indexer and HTTP API |
 | `examples/` | SDK and integration examples |
-| `docs/` | Protocol, user, and developer documentation |
+| `docs/` | Protocol, user, and developer documentation, including [analytics metric definitions](docs/ANALYTICS_METRICS.md) |
 
 Soroban contract source and deployment details live in the [companion contracts repository](https://github.com/Stellar-Clear/clearledger-contracts).
 
@@ -42,7 +42,7 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-The web app starts at `http://localhost:3000`. For the web app, Go indexer, and PostgreSQL together:
+The web app starts at `http://localhost:3000`. For a guided Testnet walkthrough covering Freighter and a read-only Soroban call, see the [Stellar Testnet quickstart](docs/QUICKSTART.md). For the web app, Go indexer, and PostgreSQL together:
 
 ```bash
 cp .env.docker.example .env.docker
@@ -61,4 +61,8 @@ Start with the [local setup guide](docs/developer-guide/local-setup.md), [archit
 
 The web application and contracts are currently deployed on Stellar Testnet for evaluation and integration. This is not a mainnet financial service. The contracts have not been formally audited, and testnet assets have no promised redemption value. Do not use real funds. Review the [contract limitations](https://github.com/Stellar-Clear/clearledger-contracts/blob/main/docs/LIMITATIONS.md) and [security policy](https://github.com/Stellar-Clear/clearledger-contracts/blob/main/SECURITY.md) before integrating.
 
+Before planning any Mainnet deployment, read the [production readiness gates](docs/PRODUCTION_READINESS.md). They record the audit, deployment, RPC, API, monitoring, wallet, recovery, and compliance work that is still required; the current Testnet setup does not satisfy them.
+
 Use testnet wallets and assets only. Never put private keys or recovery phrases in environment files or source control.
+
+For tested keyboard flows, known limitations and the reporting route, read the [accessibility statement](docs/ACCESSIBILITY.md).

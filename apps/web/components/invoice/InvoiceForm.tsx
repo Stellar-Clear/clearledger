@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useInvoiceActions } from "@/hooks/useInvoices";
 import { Button } from "@/components/ui/button";
 import { ShieldAlert, PlusCircle } from "lucide-react";
@@ -8,8 +8,10 @@ import type { AssetType } from "@/types";
 import { ASSET_OPTIONS } from "@/lib/assets";
 import { AmountInput } from "@/components/shared/AmountInput";
 import { useWalletStore } from "@/store/wallet";
+import { useProfile } from "@/hooks/useProfile";
 import { DatePicker } from "@/components/ui/date-picker";
 import { getErrorMessage } from "@/lib/errors";
+import { SupportDiagnostics } from "@/components/shared/SupportDiagnostics";
 
 const invoiceContractID = process.env.NEXT_PUBLIC_INVOICE_CONTRACT_ID || "";
 
@@ -43,6 +45,8 @@ async function cancelCreatedInvoice(invoiceId: string) {
 export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
   const { createInvoice, isCreating, listInvoice } = useInvoiceActions();
   const address = useWalletStore((s) => s.address);
+  const { profile, isProfileLoading, isVerified } = useProfile();
+  const isIssuerReady = profile?.role === "issuer" && isVerified;
 
   const [buyer, setBuyer] = useState("");
   const [faceValue, setFaceValue] = useState("");
@@ -53,6 +57,11 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<1 | 2>(1);
   const [isListing, setIsListing] = useState(false);
+  const [timeZone, setTimeZone] = useState("your local timezone");
+
+  useEffect(() => {
+    setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || "local time");
+  }, []);
 
   const parsedValue = useMemo(
     () => parseFloat(faceValue.replace(/,/g, "")) || 0,
@@ -70,6 +79,11 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
   const handleNextStep = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
+
+    if (!isIssuerReady) {
+      setError("Register and verify this wallet as an issuer before creating an invoice.");
+      return;
+    }
 
     const trimmedBuyer = buyer.trim();
     const { StrKey } = await getStellarSdk();
@@ -91,18 +105,22 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
       return;
     }
 
-    const selectedDate = new Date(dueDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // A date-only selection is an invoice calendar date, not a local instant.
+    // Keep comparisons and the on-chain timestamp anchored at UTC midnight.
+    const selectedDate = new Date(`${dueDate}T00:00:00.000Z`);
+    const now = new Date();
+    const today = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
     if (selectedDate.getTime() <= today.getTime()) {
       setError("Due date must be in the future");
       return;
     }
 
     const minDate = new Date(today);
-    minDate.setDate(minDate.getDate() + 7);
+    minDate.setUTCDate(minDate.getUTCDate() + 7);
     const maxDate = new Date(today);
-    maxDate.setDate(maxDate.getDate() + 365);
+    maxDate.setUTCDate(maxDate.getUTCDate() + 365);
     if (selectedDate.getTime() < minDate.getTime()) {
       setError("Due date must be at least 7 days from today");
       return;
@@ -124,7 +142,9 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
       const faceValueStroops = BigInt(
         Math.floor(parsedValue * 10_000_000),
       ).toString();
-      const dueDateTimestamp = Math.floor(new Date(dueDate).getTime() / 1000);
+      const dueDateTimestamp = Math.floor(
+        new Date(`${dueDate}T00:00:00.000Z`).getTime() / 1000,
+      );
 
       const response = await createInvoice({
         buyer,
@@ -251,6 +271,26 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
 
       {step === 1 ? (
         <form onSubmit={handleNextStep} className="space-y-4">
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded border border-border bg-[#080c10] px-3 py-2 text-xs font-mono"
+          >
+            <span className="text-slate-400">Issuer readiness: </span>
+            {isProfileLoading ? (
+              <span className="text-slate-300">Checking registry…</span>
+            ) : isIssuerReady ? (
+              <span className="text-emerald-400">Registered and verified</span>
+            ) : (
+              <span className="text-amber-400">
+                {profile?.role === "issuer"
+                  ? "Registered, verification pending"
+                  : profile?.role === "buyer"
+                    ? "This wallet is registered as a buyer"
+                    : "This wallet is not registered as an issuer"}
+              </span>
+            )}
+          </div>
           <div className="space-y-1">
             <label className="block text-[10px] font-bold font-mono text-slate-500 uppercase tracking-wider">
               Buyer Wallet Address
@@ -356,7 +396,10 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
           {error && (
             <div className="p-3 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-start gap-2">
               <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
-              <span className="font-mono">{error}</span>
+              <div>
+                <span className="font-mono">{error}</span>
+                <SupportDiagnostics error={error} contractId={invoiceContractID} />
+              </div>
             </div>
           )}
           <Button
@@ -399,11 +442,17 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
               <span className="text-slate-500">Due Date:</span>
               <span className="text-white">{dueDate}</span>
             </div>
+            <p className="text-[10px] leading-4 text-slate-500">
+              Stored as {dueDate} 00:00 UTC. Your local timezone is {timeZone}.
+            </p>
           </div>
           {error && (
             <div className="p-3 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-start gap-2">
               <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
-              <span className="font-mono">{error}</span>
+              <div>
+                <span className="font-mono">{error}</span>
+                <SupportDiagnostics error={error} contractId={invoiceContractID} />
+              </div>
             </div>
           )}
           <div className="flex gap-3">

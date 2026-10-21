@@ -174,6 +174,20 @@ export class InvoiceClient extends BaseContractClient {
   }
 
   /**
+   * Reads the amount funded for an invoice. The contract accessor returns the
+   * full invoice record, so use its funded amount as the authoritative value.
+   * @param invoiceIdHex - The invoice ID as a 32-byte hex string.
+   * @param signerPublicKey - The public key used to simulate the read call.
+   */
+  async getFundedAmount(
+    invoiceIdHex: string,
+    signerPublicKey: string,
+  ): Promise<bigint> {
+    const invoice = await this.get(invoiceIdHex, signerPublicKey);
+    return invoice.fundedAmount;
+  }
+
+  /**
    * Retrieves all invoices with the specified on-chain status.
    * This is a read-only (simulated) call — no on-chain side effects.
    *

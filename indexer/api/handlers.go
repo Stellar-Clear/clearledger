@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +28,8 @@ type APIHandler struct {
 	statsMu         sync.RWMutex
 	statsData       *db.ProtocolStats
 	statsCached     time.Time
+	challengeMu     sync.Mutex
+	usedChallenges  map[string]time.Time
 	listenerHealth  *ListenerHealth
 	dbHealthChecker func(context.Context) error
 
@@ -33,12 +37,13 @@ type APIHandler struct {
 	// in NewAPIHandler so production behavior is unchanged; tests in this
 	// package can override individual fields to avoid requiring a live DB
 	// or Soroban RPC.
-	getInvoiceByIDFn   func(context.Context, string) (*db.DbInvoice, error)
-	getPoolStatsFn     func(context.Context) (*db.DbPoolStats, error)
-	getPoolSnapshotsFn func(context.Context, int) ([]*db.DbPoolSnapshotHistory, error)
-	getRecentEventsFn  func(context.Context, int) ([]*db.EventLog, error)
-	getProtocolStatsFn func(context.Context) (*db.ProtocolStats, error)
-	readContractFn     func(ctx context.Context, rpcURL string, contractID string, method string, args []xdr.ScVal, serverKP *keypair.Full) (xdr.ScVal, error)
+	getInvoiceByIDFn      func(context.Context, string) (*db.DbInvoice, error)
+	getPoolStatsFn        func(context.Context) (*db.DbPoolStats, error)
+	getPoolSnapshotsFn    func(context.Context, int) ([]*db.DbPoolSnapshotHistory, error)
+	getRecentEventsFn     func(context.Context, int) ([]*db.EventLog, error)
+	getRecentEventsPageFn func(context.Context, int, int64, int) ([]*db.EventLog, error)
+	getProtocolStatsFn    func(context.Context) (*db.ProtocolStats, error)
+	readContractFn        func(ctx context.Context, rpcURL string, contractID string, method string, args []xdr.ScVal, serverKP *keypair.Full) (xdr.ScVal, error)
 }
 
 func NewAPIHandler(cfg *config.Config) (*APIHandler, error) {
@@ -50,16 +55,39 @@ func NewAPIHandler(cfg *config.Config) (*APIHandler, error) {
 		cfg:             cfg,
 		serverKP:        kp,
 		listenerHealth:  NewListenerHealth(),
+		usedChallenges:  make(map[string]time.Time),
 		dbHealthChecker: defaultDBHealthChecker,
 		getInvoiceByIDFn: func(ctx context.Context, id string) (*db.DbInvoice, error) {
 			return db.GetInvoiceByID(ctx, db.Pool, id)
 		},
-		getPoolStatsFn:     db.GetPoolStats,
-		getPoolSnapshotsFn: db.GetPoolSnapshotHistory,
-		getRecentEventsFn:  db.GetRecentEvents,
-		getProtocolStatsFn: db.GetProtocolStats,
-		readContractFn:     soroban.ReadContract,
+		getPoolStatsFn:        db.GetPoolStats,
+		getPoolSnapshotsFn:    db.GetPoolSnapshotHistory,
+		getRecentEventsFn:     db.GetRecentEvents,
+		getRecentEventsPageFn: db.GetRecentEventsPage,
+		getProtocolStatsFn:    db.GetProtocolStats,
+		readContractFn:        soroban.ReadContract,
 	}, nil
+}
+
+// claimChallenge prevents a verified SEP-10 transaction from minting more
+// than one session on this API process. Expired fingerprints are discarded so
+// the replay cache remains bounded by the challenge lifetime.
+func (h *APIHandler) claimChallenge(transaction string) bool {
+	fingerprint := sha256.Sum256([]byte(transaction))
+	key := hex.EncodeToString(fingerprint[:])
+	now := time.Now()
+	h.challengeMu.Lock()
+	defer h.challengeMu.Unlock()
+	for used, expiresAt := range h.usedChallenges {
+		if !now.Before(expiresAt) {
+			delete(h.usedChallenges, used)
+		}
+	}
+	if _, exists := h.usedChallenges[key]; exists {
+		return false
+	}
+	h.usedChallenges[key] = now.Add(15 * time.Minute)
+	return true
 }
 
 func GetServerKeypair(seed string) (*keypair.Full, error) {
@@ -87,6 +115,46 @@ type httpError struct {
 	message string
 }
 
+type apiErrorBody struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+func apiErrorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
+		return "bad_request"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "unauthorized"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	case http.StatusGatewayTimeout, http.StatusRequestTimeout:
+		return "timeout"
+	case http.StatusServiceUnavailable:
+		return "service_unavailable"
+	default:
+		if status >= http.StatusInternalServerError {
+			return "internal_error"
+		}
+		return "request_failed"
+	}
+}
+
+func writeAPIError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	var body apiErrorBody
+	body.Error.Code = apiErrorCode(status)
+	body.Error.Message = message
+	if r != nil {
+		body.RequestID = middleware.GetReqID(r.Context())
+	}
+	writeJSON(w, status, body)
+}
+
 func (e *httpError) Error() string { return e.message }
 
 // Status returns the HTTP status code this error should be served under.
@@ -110,7 +178,7 @@ func internalError(w http.ResponseWriter, r *http.Request, msg string, err error
 		"method", r.Method,
 		"path", r.URL.Path,
 	)
-	http.Error(w, msg+" (request id: "+middleware.GetReqID(r.Context())+")", http.StatusInternalServerError)
+	writeAPIError(w, r, http.StatusInternalServerError, msg)
 }
 
 // writeHTTPError serves err as a plain-text error response, using the status
@@ -120,7 +188,7 @@ func internalError(w http.ResponseWriter, r *http.Request, msg string, err error
 func writeHTTPError(w http.ResponseWriter, r *http.Request, err error) {
 	var he *httpError
 	if errors.As(err, &he) {
-		http.Error(w, he.message, he.status)
+		writeAPIError(w, r, he.status, he.message)
 		return
 	}
 	internalError(w, r, "internal server error", err)

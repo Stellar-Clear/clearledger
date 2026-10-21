@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -575,8 +576,12 @@ func TestRateLimitMiddleware_UsesGenericTooManyRequestsBody(t *testing.T) {
 	if second.Code != http.StatusTooManyRequests {
 		t.Fatalf("second request status=%d, want %d; body=%s", second.Code, http.StatusTooManyRequests, second.Body.String())
 	}
-	if body := strings.TrimSpace(second.Body.String()); body != "Too Many Requests" {
-		t.Fatalf("body=%q, want %q", body, "Too Many Requests")
+	var response apiErrorBody
+	if err := json.Unmarshal(second.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode rate-limit error: %v", err)
+	}
+	if response.Error.Code != "rate_limited" || response.Error.Message != "too many requests" {
+		t.Fatalf("error=%+v, want rate_limited envelope", response.Error)
 	}
 }
 

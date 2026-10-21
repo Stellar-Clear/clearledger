@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useMemo, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { PageLayout } from "@/components/shared/PageLayout";
@@ -14,6 +15,7 @@ import { useWalletStore } from "@/store/wallet";
 import { useProfile } from "@/hooks/useProfile";
 import { Invoice } from "@/types";
 import { formatAmount } from "@/lib/assets";
+import { getRecentEvents } from "@/lib/api";
 import { ShieldAlert, RotateCcw, Save, Trash2, Menu } from "lucide-react";
 
 const MARKETPLACE_FILTERS_KEY = "clearledger:marketplace:filters";
@@ -96,6 +98,12 @@ export default function Marketplace() {
   const role = useWalletStore((s) => s.role);
   const { isVerified } = useProfile();
   const { stats, isStatsLoading } = usePool();
+  const indexerFreshness = useQuery({
+    queryKey: ["marketplace", "indexer-freshness"],
+    queryFn: () => getRecentEvents(1),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
   const [invoicePage, setInvoicePage] = useState(1);
   const [invoiceLimit, setInvoiceLimit] = useState(20);
   const [showPresetsDropdown, setShowPresetsDropdown] = useState(false);
@@ -281,6 +289,15 @@ export default function Marketplace() {
               </h1>
               <p className="text-slate-500 text-xs font-mono mt-1">
                 {t("header.description")}
+              </p>
+              <p className="mt-2 text-[10px] font-mono text-slate-500" aria-live="polite">
+                {indexerFreshness.isFetching
+                  ? "Refreshing indexed data…"
+                  : indexerFreshness.data?.[0]
+                    ? `Latest indexed event: ledger ${indexerFreshness.data[0].ledger} · ${new Date(indexerFreshness.data[0].ledger_closed_at * 1000).toLocaleString()}`
+                    : indexerFreshness.isError
+                      ? "Indexer freshness is temporarily unavailable."
+                      : "Waiting for indexed events."}
               </p>
             </div>
 
@@ -597,7 +614,9 @@ export default function Marketplace() {
                 selectedIds={selectedInvoiceIds}
                 onSelectionChange={handleSelectionChange}
                 emptyStateTitle={t("invoices.emptyState.title")}
-                emptyStateDescription={t("invoices.emptyState.description")}
+                emptyStateDescription={
+                  `No invoices match status ${statusFilter === "ALL" ? "any" : statusFilter}, amount ${minAmount || "any"}–${maxAmount || "any"} USDC, and maximum discount ${maxDiscount || "any"} bps. Clear the filters to see eligible invoices.`
+                }
                 emptyStateAction={{
                   label: t("invoices.emptyState.action"),
                   onClick: () => {

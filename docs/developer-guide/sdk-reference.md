@@ -350,6 +350,22 @@ fromUsdc("1000.50"); // → BigInt(10005000000)
 
 ## Error Handling
 
+Use `decodeSorobanError` to map known ClearLedger contract errors to stable SDK
+codes while retaining the original response for diagnostics:
+
+```ts
+import { decodeSorobanError } from "@clearledger/sdk";
+
+const decoded = decodeSorobanError(rawSorobanError);
+if (decoded.code === "PROFILE_NOT_FOUND") {
+  // Handle a missing registry profile.
+}
+console.debug(decoded.raw); // Original RPC error text is preserved.
+```
+
+Unknown contract errors return `code: null` and a generic message; inspect
+`raw` when additional diagnostics are needed.
+
 All SDK calls throw on failure. Failures surface as typed errors so consumers
 can branch with `instanceof` instead of string-matching `err.message`:
 

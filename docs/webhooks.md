@@ -236,8 +236,15 @@ What a receiver sees, per attempt:
   turns the `POST` into a `GET` without a body, so register the final URL.
 - **Response storage:** on success, up to the first 4096 bytes of your response
   body are stored in `webhook_deliveries.last_response`. On failure only the
-  status code (`last_status`) and an error message (`last_error`, for example
-  `non-2xx response: 500`) are stored.
+  status code (`last_status`) and a minimal error message (`last_error`, for
+  example `non-2xx response: 500`) are stored. Failure response bodies are
+  untrusted and are never copied into `last_error`.
+- **Trust boundary for `last_error`:** `last_error` is an operator-facing
+  diagnostic, not a copy of the request. Before it is persisted, the delivery
+  worker redacts the endpoint URL (which may contain an API key in its path or
+  query string), the subscription's signing secret, and any other bare URL, then
+  caps the value at 1024 bytes. Never rely on `last_error` to carry provider
+  credentials, tokens, or the subscriber's response body.
 - **Ordering and duplicates:** delivery is at-least-once, and deliveries are
   not ordered. The queue holds at most one row per subscription and `event_id`,
   but that row can be sent more than once (see
@@ -253,7 +260,10 @@ What happens in the queue:
   A new delivery is first attempted on the next poll after the event is indexed.
 - `webhook_deliveries.status` is `pending` while a delivery is waiting for its
   first attempt or a retry, `delivered` after a `2xx`, and `dead_letter` once
-  retries are exhausted. Dead-lettered rows are never retried automatically.
+  retries are exhausted. `terminal_status` mirrors the final value and is
+  `NULL` while pending, so a single column answers "is this row finished?".
+  Dead-lettered rows are never retried automatically, and delivered rows are
+  never returned to the queue even if a duplicate or late outcome is recorded.
 - Delivery rows are only created for subscriptions that are active when the
   event is indexed. Rows whose subscription is later set to `active = false`
   are not attempted; they stay `pending` until it is re-activated.
@@ -318,15 +328,26 @@ exponential backoff.
 | —       | Attempt 5 fails: marked `dead_letter`, no retries |
 
 - The delay after the _n_-th failed attempt is `10s × 2^n`
-  (`backoffBase * (1 << nextAttempt)` in `indexer/webhooks/worker.go`).
+  (`backoffBase * (1 << nextAttempt)` in `indexer/webhooks/worker.go`), capped
+  at **15 minutes**. Together with the attempt cap this keeps the schedule
+  finite for every row.
 - A retry runs on the first poll after its scheduled time, so it can start up to
   one poll interval (5s) later than listed.
 - The limit comes from the `webhook_deliveries.max_attempts` column (default
   `5`, set per delivery row by migration `009_add_webhook_subscriptions.sql`),
-  not from `WorkerConfig.MaxAttempts`.
-- A dead-lettered row shows `attempts = 4`: the counter records the failures
-  that were scheduled for a retry, and the final failure sets the status without
-  incrementing it.
+  not from `WorkerConfig.MaxAttempts`. The worker and the `Mark*` helpers clamp
+  it to `1..20` (`db.MaxDeliveryAttempts`), so a malformed row cannot retry
+  forever.
+- `attempt_count` records every attempt, including the terminal failure, so a
+  dead-lettered row shows `attempt_count = 5` (the legacy `attempts` column is
+  kept in sync for older readers).
+- `next_attempt_at` is updated only for a retry; terminal rows keep their last
+  value but are excluded from claiming by `status`/`terminal_status`.
+- Outcome writes are idempotent and compare-and-set on the persisted attempt
+  count: a duplicate success or a stale failure callback cannot increment the
+  counter twice or move a terminal row back to `pending`.
+- If a worker dies after claiming, `locked_until` expires and the row is
+  reclaimed with the same `attempt_count`; claiming itself is not an attempt.
 
 ### Subscription Management
 
@@ -339,6 +360,9 @@ two tables hold the state:
   `locked_until` holds the current claim (see
   [Delivery Guarantees](#delivery-guarantees)) and is `NULL` when the row is
   free; migration `010_add_webhook_delivery_locking.sql` added the column.
+  Migration `015_add_webhook_delivery_attempt_tracking.sql` added
+  `attempt_count` and `terminal_status`, backfilled them from `attempts` and
+  `status`, and keeps the legacy columns synchronized during rolling deploys.
 
 ## Implementation Details
 
