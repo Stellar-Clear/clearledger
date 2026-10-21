@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { PageLayout } from "@/components/shared/PageLayout";
 import { useWalletStore } from "@/store/wallet";
 import { useProfile } from "@/hooks/useProfile";
@@ -98,6 +100,8 @@ function NotificationPreferences({ address }: { address: string }) {
 const registryContractID = process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ID || "";
 
 export default function ProfilePage() {
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
   const { connected, address } = useWalletStore();
   const {
     profile,
@@ -236,6 +240,17 @@ export default function ProfilePage() {
             </div>
           ) : profile ? (
             <div className="space-y-6">
+              {returnTo && transactionState === "confirmed" && (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 flex items-center justify-between gap-4">
+                  <p className="text-xs font-mono text-slate-300">
+                    Your registration was submitted. Return to the invoice form
+                    after verification is complete.
+                  </p>
+                  <Link href={returnTo} className="shrink-0 rounded bg-primary px-3 py-2 text-[10px] font-bold font-mono uppercase text-black">
+                    Return to invoice
+                  </Link>
+                </div>
+              )}
               {/* Status Banner */}
               <div className="bg-[#0d131a] border border-border rounded-lg p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-start gap-4">
