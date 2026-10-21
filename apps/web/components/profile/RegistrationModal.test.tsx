@@ -93,7 +93,7 @@ describe("RegistrationModal", () => {
     expect(register).not.toHaveBeenCalled();
   });
 
-  it("shows the registerError message when the mutation fails", () => {
+  it("announces the registerError message through an alert when the mutation fails", () => {
     render(
       <RegistrationModal
         isOpen={true}
@@ -104,9 +104,9 @@ describe("RegistrationModal", () => {
       />,
     );
 
-    expect(
-      screen.getByText(/registry contract rejected the tx/i),
-    ).toBeInTheDocument();
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveAttribute("aria-live", "assertive");
+    expect(alert).toHaveTextContent(/registry contract rejected the tx/i);
   });
 
   it("disables the submit and cancel buttons while isRegistering is true", () => {

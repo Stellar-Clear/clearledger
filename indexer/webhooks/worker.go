@@ -184,48 +184,103 @@ func (w *DeliveryWorker) attemptDelivery(ctx context.Context, delivery *db.Webho
 		if dbErr := db.MarkDeliverySuccess(writeCtx, delivery.ID, resp.StatusCode, bodyStr); dbErr != nil {
 			slog.Error("webhook worker: mark success failed", "delivery_id", delivery.ID, "error", dbErr)
 		}
-		slog.Info("webhook worker: delivered", "delivery_id", delivery.ID, "endpoint", delivery.EndpointURL, "status", resp.StatusCode)
+		// The delivery URL may contain provider credentials, so logs identify
+		// the subscription instead of echoing the endpoint.
+		slog.Info("webhook worker: delivered", "delivery_id", delivery.ID, "subscription_id", delivery.SubscriptionID, "status", resp.StatusCode)
 		return
 	}
 
 	sc := resp.StatusCode
-	w.handleFailure(ctx, delivery, &sc, fmt.Sprintf("non-2xx response: %d", sc))
+	w.handleFailure(ctx, delivery, &sc, failureReason(sc))
+}
+
+// failureReason is deliberately limited to the HTTP status. Subscriber
+// response bodies are untrusted and may contain credentials or arbitrary
+// binary data, so they are never copied into last_error.
+func failureReason(statusCode int) string {
+	return fmt.Sprintf("non-2xx response: %d", statusCode)
 }
 
 // handleFailure processes a failed delivery attempt, scheduling retry or dead-lettering.
 func (w *DeliveryWorker) handleFailure(ctx context.Context, delivery *db.WebhookDelivery, statusCode *int, errMsg string) {
 	writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	nextAttempt := delivery.Attempts + 1
+
+	// Never persist (or log) the endpoint URL or signing secret. Transport
+	// errors from net/http embed the request URL, which may carry an API key.
+	errMsg = db.SanitizeDeliveryError(errMsg, delivery.EndpointURL, delivery.EndpointSecret)
+	attemptsMade := deliveryAttempts(delivery)
+	maxAttempts := effectiveMaxAttempts(delivery, w.cfg.MaxAttempts)
+	nextAttempt := attemptsMade + 1
 	slog.Warn("webhook worker: delivery failed",
 		"delivery_id", delivery.ID,
+		"subscription_id", delivery.SubscriptionID,
 		"attempt", nextAttempt,
-		"max_attempts", delivery.MaxAttempts,
-		"endpoint", delivery.EndpointURL,
+		"max_attempts", maxAttempts,
 		"error", errMsg,
 	)
 
-	if nextAttempt >= delivery.MaxAttempts {
-		if err := db.MarkDeliveryDeadLetter(writeCtx, delivery.ID, errMsg); err != nil {
+	if nextAttempt >= maxAttempts {
+		if err := db.MarkDeliveryDeadLetterWithStatusIfAttempt(writeCtx, delivery.ID, attemptsMade, statusCode, errMsg); err != nil {
 			slog.Error("webhook worker: mark dead_letter failed", "delivery_id", delivery.ID, "error", err)
 		}
-		slog.Error("webhook worker: delivery dead-lettered", "delivery_id", delivery.ID, "endpoint", delivery.EndpointURL)
+		slog.Error("webhook worker: delivery dead-lettered", "delivery_id", delivery.ID, "subscription_id", delivery.SubscriptionID)
 		return
 	}
 
-	// Exponential backoff: backoffBase * 2^nextAttempt, so 20s, 40s, 80s and
-	// 160s after failed attempts 1-4. The failure that reaches max_attempts
-	// (the 5th by default) is dead-lettered above without a delay.
-	delay := backoffBase * (1 << uint(nextAttempt))
-	nextAt := time.Now().Add(delay)
-	if err := db.MarkDeliveryRetry(writeCtx, delivery.ID, nextAt, statusCode, errMsg); err != nil {
+	nextAt := time.Now().Add(backoffDelay(nextAttempt))
+	if err := db.MarkDeliveryRetryIfAttempt(writeCtx, delivery.ID, attemptsMade, nextAt, statusCode, errMsg); err != nil {
 		slog.Error("webhook worker: mark retry failed", "delivery_id", delivery.ID, "error", err)
 	}
 }
 
 const (
 	backoffBase = 10 * time.Second
+	maxBackoff  = 15 * time.Minute
 )
+
+// deliveryAttempts reads the persisted attempt count, tolerating callers that
+// only populated the legacy field (the claiming query keeps both equal).
+func deliveryAttempts(delivery *db.WebhookDelivery) int {
+	if delivery.AttemptCount > delivery.Attempts {
+		return delivery.AttemptCount
+	}
+	return delivery.Attempts
+}
+
+// effectiveMaxAttempts applies the configured fallback and the hard bound. A
+// malformed row (max_attempts <= 0) must not turn a delivery into an infinite
+// retry loop.
+func effectiveMaxAttempts(delivery *db.WebhookDelivery, fallback int) int {
+	maxAttempts := delivery.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = fallback
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = DefaultWorkerConfig().MaxAttempts
+	}
+	if maxAttempts > db.MaxDeliveryAttempts {
+		maxAttempts = db.MaxDeliveryAttempts
+	}
+	return maxAttempts
+}
+
+// backoffDelay returns the bounded exponential delay before retry
+// nextAttempt: 20s, 40s, 80s, 160s, ... capped at maxBackoff. The cap keeps a
+// long-lived row's schedule finite even if its max_attempts is raised.
+func backoffDelay(nextAttempt int) time.Duration {
+	if nextAttempt <= 0 {
+		return backoffBase
+	}
+	if nextAttempt >= 32 {
+		return maxBackoff
+	}
+	delay := backoffBase * (1 << uint(nextAttempt))
+	if delay <= 0 || delay > maxBackoff {
+		return maxBackoff
+	}
+	return delay
+}
 
 // sign returns the HMAC-SHA256 hex digest of "<timestamp>.<payload>".
 func sign(secret, timestamp string, payload []byte) string {

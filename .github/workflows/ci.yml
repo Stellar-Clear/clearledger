@@ -8,6 +8,25 @@ on:
     branches: [main]
 
 jobs:
+  check-markdown-links:
+    name: Check Internal Markdown Links
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run link checker self-test
+        run: node scripts/check-md-links.mjs --self-test
+
+      - name: Check internal Markdown links
+        run: node scripts/check-md-links.mjs
+
   verify-frontend-and-sdk:
     name: Verify TypeScript Frontend & SDK
     runs-on: ubuntu-latest
@@ -28,6 +47,11 @@ jobs:
 
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Check translation catalogs
+        run: |
+          pnpm --filter web test:translations
+          pnpm --filter web check:translations
 
       - name: Typecheck
         run: pnpm typecheck

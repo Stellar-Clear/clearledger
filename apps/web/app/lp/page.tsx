@@ -13,7 +13,6 @@ import { useWalletStore } from "@/store/wallet";
 import { useConfirmDialogStore } from "@/store/confirmDialog";
 import { PoolClient, type SimulationResult } from "@clearledger/sdk";
 import { Address, nativeToScVal } from "@stellar/stellar-sdk";
-import { formatAmount } from "@/lib/assets";
 
 const poolContractID = process.env.NEXT_PUBLIC_POOL_CONTRACT_ID || "";
 const STROOPS_PER_UNIT = 10_000_000;
@@ -40,7 +39,15 @@ function formatSharePrice(
 }
 
 function formatShareValue(value: bigint | undefined): string {
-  return formatAmount(value ?? 0n);
+  const amount = value ?? 0n;
+  const negative = amount < 0n;
+  const absolute = negative ? -amount : amount;
+  const whole = (absolute / BigInt(STROOPS_PER_UNIT)).toString();
+  const groupedWhole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const fraction = (absolute % BigInt(STROOPS_PER_UNIT))
+    .toString()
+    .padStart(7, "0");
+  return `${negative ? "-" : ""}${groupedWhole}.${fraction} USDC`;
 }
 
 export default function LPDashboard() {
@@ -136,6 +143,9 @@ export default function LPDashboard() {
     requestConfirmation({
       label: "Withdraw LP liquidity",
       invoiceId: address || "LP position",
+      contractId: poolContractID,
+      asset: "USDC LP shares",
+      amount: `${withdrawShares} shares`,
       fn: async () => {
         await withdraw({ shares: shareAmount });
         setWithdrawShares("");
@@ -149,6 +159,24 @@ export default function LPDashboard() {
     Math.max(0, (typedStats?.utilizationRateBps ?? 0) / 100),
   );
   const sharePrice = formatSharePrice(typedStats?.sharePrice);
+  const enteredShares = Number(withdrawShares);
+  const previewShares =
+    Number.isFinite(enteredShares) && enteredShares > 0
+      ? BigInt(Math.floor(enteredShares * STROOPS_PER_UNIT))
+      : 0n;
+  const estimatedPositionValue =
+    position?.shares && previewShares > 0n
+      ? (position.usdcValue * previewShares) / position.shares
+      : 0n;
+  const availableLiquidity = typedStats?.availableLiquidity ?? 0n;
+  const estimatedWithdrawal =
+    estimatedPositionValue < availableLiquidity
+      ? estimatedPositionValue
+      : availableLiquidity;
+  const exceedsPosition = Boolean(
+    position?.shares && previewShares > position.shares,
+  );
+  const exceedsLiquidity = estimatedPositionValue > availableLiquidity;
 
   return (
     <PageLayout>
@@ -262,6 +290,12 @@ export default function LPDashboard() {
             <h2 className="text-sm font-bold uppercase tracking-wider text-white">
               Deposit USDC
             </h2>
+            <aside className="rounded border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200/80">
+              <p className="font-semibold text-amber-200">Before depositing on Testnet</p>
+              <p className="mt-1">
+                Switch your wallet to Stellar Testnet, add a trustline for the configured USDC asset, and keep test XLM for transaction fees and the account reserve. You can get test XLM from the Stellar Testnet Friendbot.
+              </p>
+            </aside>
             <label
               htmlFor="deposit-amount"
               className="block text-sm text-slate-300"
@@ -316,9 +350,39 @@ export default function LPDashboard() {
             <p className="text-xs text-slate-500">
               Available: {formatShareValue(position?.shares)}
             </p>
+            <div className="space-y-1 rounded border border-border/60 bg-slate-950/60 p-3 text-xs">
+              <div className="flex justify-between gap-3">
+                <span className="text-slate-400">Estimated USDC withdrawal</span>
+                <span className="font-mono text-white">
+                  {formatShareValue(estimatedWithdrawal)}
+                </span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-slate-400">Pool liquidity available</span>
+                <span className="font-mono text-white">
+                  {formatShareValue(availableLiquidity)}
+                </span>
+              </div>
+              <p className="pt-1 text-[10px] text-slate-500">
+                Estimate uses the latest indexed position and pool snapshot; the confirmed amount may change.
+              </p>
+              {(exceedsPosition || exceedsLiquidity) && (
+                <p role="alert" className="pt-1 text-[10px] text-amber-300">
+                  {exceedsPosition
+                    ? "Requested shares exceed your current position."
+                    : "Requested withdrawal exceeds current pool liquidity."}
+                </p>
+              )}
+            </div>
             <button
               type="submit"
-              disabled={isWithdrawing || !position?.shares}
+              disabled={
+                isWithdrawing ||
+                !position?.shares ||
+                previewShares <= 0n ||
+                exceedsPosition ||
+                exceedsLiquidity
+              }
               className="rounded border border-rose-500/60 px-4 py-2 font-semibold text-rose-300 disabled:opacity-50"
             >
               {isWithdrawing ? "Withdrawing..." : "Withdraw Shares"}
