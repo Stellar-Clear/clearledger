@@ -12,15 +12,15 @@
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
-    "@stellar/freighter-api": "^2.0.0",
-    "@stellar/stellar-sdk": "^13.0.0",
+    "@stellar/freighter-api": "^6.0.1",
+    "@stellar/stellar-sdk": "^17.2.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
-    "@typescript-eslint/eslint-plugin": "^8.62.1",
-    "@typescript-eslint/parser": "^8.62.1",
-    "eslint": "^8.57.1",
+    "@typescript-eslint/eslint-plugin": "^8.71.2",
+    "@typescript-eslint/parser": "^8.71.1",
+    "eslint": "^10.13.0",
     "@vitest/coverage-v8": "^4.1.9",
     "typescript": "^5.4.5",
     "vitest": "^4.1.9"

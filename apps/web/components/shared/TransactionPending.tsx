@@ -5,17 +5,63 @@ import { motion, useReducedMotion } from "framer-motion";
 import { Loader2, ExternalLink, ShieldCheck } from "lucide-react";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 
+export type TransactionPendingState = "pending" | "confirmed" | "failed";
+
 interface TransactionPendingProps {
   isOpen: boolean;
   txHash: string | null;
   statusText?: string;
+  /**
+   * Explicit lifecycle state for the announcement. When omitted, the state is
+   * inferred from the dialog props: a timeout is "failed", a transaction hash
+   * is "confirmed", and everything else is "pending".
+   */
+  state?: TransactionPendingState;
+  /** Optional failure detail announced assertively when the state is failed. */
+  errorText?: string;
   onClose?: () => void;
+}
+
+function resolveLifecycleState(
+  state: TransactionPendingState | undefined,
+  timedOut: boolean,
+  txHash: string | null,
+): TransactionPendingState {
+  // Terminal states supplied by the caller are authoritative. A timeout only
+  // applies while the transaction is still pending.
+  if (state === "confirmed" || state === "failed") return state;
+  if (timedOut) return "failed";
+  return txHash ? "confirmed" : "pending";
+}
+
+function getAnnouncement(
+  state: TransactionPendingState,
+  statusText: string,
+  errorText: string | undefined,
+  timedOut: boolean,
+) {
+  if (state === "failed") {
+    const reason =
+      errorText ||
+      (timedOut
+        ? "Confirmation timed out. You can close and check status manually."
+        : statusText);
+    return `Transaction failed. ${reason}`;
+  }
+
+  if (state === "confirmed") {
+    return "Transaction confirmed.";
+  }
+
+  return `Transaction pending. ${statusText}`;
 }
 
 export function TransactionPending({
   isOpen,
   txHash,
   statusText = "Waiting for confirmation...",
+  state,
+  errorText,
   onClose,
 }: TransactionPendingProps) {
   const [localStatus, setLocalStatus] = useState<string | null>(null);
@@ -25,28 +71,26 @@ export function TransactionPending({
   const shouldReduceMotion = useReducedMotion();
 
   // Only allow dismissal (Escape / backdrop click) after the transaction has
-  // completed, i.e. when txHash is available.
-  const canDismiss = timedOut || Boolean(txHash && onClose);
+  // completed, i.e. when a hash or terminal state is available.
+  const canDismiss = Boolean(onClose)
+    ? timedOut || state === "confirmed" || state === "failed" || Boolean(txHash)
+    : false;
 
+  // Escape is handled by the focus trap's document listener so it works no
+  // matter where focus sits inside the dialog, and only once the transaction
+  // can be closed. Background content is inert while authorization is open.
   const overlayRef = useFocusTrap<HTMLDivElement>(
     isOpen,
     canDismiss ? onClose : undefined,
+    { inertBackground: true },
   );
-
-  // Register a global Escape-key listener that dismisses the dialog only
-  // after the transaction has completed or timed out.
-  React.useEffect(() => {
-    if (!canDismiss) return;
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose!();
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [canDismiss, onClose]);
 
   // Timeout logic: if modal stays open for 60s without a tx hash, mark as timed out.
   React.useEffect(() => {
-    if (!isOpen || txHash) return;
+    if (!isOpen || txHash || state === "confirmed" || state === "failed") {
+      setTimedOut(false);
+      return;
+    }
     setTimedOut(false);
     setLocalStatus("Waiting for confirmation...");
     const timer = setTimeout(() => {
@@ -56,9 +100,17 @@ export function TransactionPending({
       );
     }, 60_000);
     return () => clearTimeout(timer);
-  }, [isOpen, txHash]);
+  }, [isOpen, txHash, state]);
 
   if (!isOpen) return null;
+
+  const lifecycleState = resolveLifecycleState(state, timedOut, txHash);
+  const announcement = getAnnouncement(
+    lifecycleState,
+    statusText,
+    errorText,
+    timedOut,
+  );
 
   return (
     <div
@@ -73,12 +125,44 @@ export function TransactionPending({
         if (canDismiss && e.target === e.currentTarget) onClose!();
       }}
       // Keyboard handler satisfies jsx-a11y/click-events-have-key-events.
+      // Escape itself is dispatched by the focus trap, which also covers
+      // focus targets outside this element.
       onKeyDown={(e) => {
-        if (e.key === "Escape" && canDismiss) onClose!();
+        if (e.key === "Escape" && canDismiss) {
+          e.preventDefault();
+        }
       }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-[#080c10]/95 backdrop-blur-sm p-4"
     >
       <div className="w-full max-w-md bg-card border border-border rounded-lg p-6 flex flex-col items-center justify-center text-center shadow-[0_0_50px_rgba(0,212,170,0.05)]">
+        {/*
+          Lifecycle announcements live in visually hidden, pre-existing regions
+          so state changes are announced without moving focus. Only one region
+          carries text for a given state, which prevents duplicate speech.
+        */}
+        <div className="sr-only">
+          <p
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            aria-relevant="text"
+            data-testid="transaction-status-polite"
+            data-state={lifecycleState}
+          >
+            {lifecycleState === "failed" ? "" : announcement}
+          </p>
+          <p
+            role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
+            aria-relevant="text"
+            data-testid="transaction-status-assertive"
+            data-state={lifecycleState}
+          >
+            {lifecycleState === "failed" ? announcement : ""}
+          </p>
+        </div>
+
         {/* Animated Stellar Orbit Logo */}
         <div className="relative w-28 h-28 flex items-center justify-center mb-6">
           {/* Central Core */}

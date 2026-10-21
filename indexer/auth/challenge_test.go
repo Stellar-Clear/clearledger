@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +70,30 @@ func TestGenerateChallenge_ProducesServerSignedManageDataTx(t *testing.T) {
 	}
 	if len(tx.Signatures()) != 1 {
 		t.Errorf("expected the server signature only, got %d signatures", len(tx.Signatures()))
+	}
+}
+
+func TestGenerateChallenge_RejectsNonAccountClientAddresses(t *testing.T) {
+	serverKP, _ := keypair.Random()
+	clientKP, _ := keypair.Random()
+
+	tests := []struct {
+		name    string
+		address string
+		wantErr error
+	}{
+		{name: "contract address", address: validContractAddress(t), wantErr: ErrAddressWrongVersion},
+		{name: "seed", address: clientKP.Seed(), wantErr: ErrAddressWrongVersion},
+		{name: "bad checksum", address: corruptChecksum(clientKP.Address()), wantErr: ErrAddressMalformed},
+		{name: "empty", address: "", wantErr: ErrAddressEmpty},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := GenerateChallenge(serverKP, tt.address, testNetworkPassphrase); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("got error %v, want %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 

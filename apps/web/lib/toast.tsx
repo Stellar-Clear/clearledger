@@ -13,10 +13,19 @@ function ToastAnnouncement({
   action: string;
   children?: ReactNode;
 }) {
-  const prefix = variant === "error" ? "Error: " : "Success: ";
+  const isError = variant === "error";
+  const prefix = isError
+    ? "Transaction failed. Error: "
+    : "Transaction confirmed. Success: ";
 
   return (
-    <div aria-atomic="true" className="flex flex-col gap-1">
+    <div
+      role={isError ? "alert" : "status"}
+      aria-live={isError ? "assertive" : "polite"}
+      aria-atomic="true"
+      aria-relevant="text"
+      className="flex flex-col gap-1"
+    >
       <span className="font-medium text-sm">
         <span className="sr-only">{prefix}</span>
         {action}

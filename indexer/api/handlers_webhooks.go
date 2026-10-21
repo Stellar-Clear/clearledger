@@ -5,14 +5,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"time"
 
+	"clearledger/indexer/db"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"clearledger/indexer/db"
 )
 
 type WebhookSubscription struct {
@@ -27,6 +29,35 @@ type WebhookSubscription struct {
 type CreateWebhookRequest struct {
 	URL        string   `json:"url"`
 	EventTypes []string `json:"event_types"`
+}
+
+// RotateWebhookRequest optionally overrides the configured overlap window.
+// OverlapSeconds is capped so a caller cannot keep a compromised key valid
+// indefinitely; zero uses WEBHOOK_SECRET_OVERLAP.
+type RotateWebhookRequest struct {
+	OverlapSeconds int `json:"overlap_seconds,omitempty"`
+}
+
+const (
+	defaultWebhookSecretOverlap = 24 * time.Hour
+	maxWebhookSecretOverlap     = 30 * 24 * time.Hour
+)
+
+// rotateWebhookSecret is isolated in a variable so handler tests can exercise
+// authorization and error mapping without a database.
+var rotateWebhookSecret = func(ctx context.Context, id uuid.UUID, ownerAddress, newSecret string, overlap time.Duration) (WebhookSubscription, error) {
+	rotated, err := db.RotateWebhookSigningSecret(ctx, id, ownerAddress, newSecret, overlap)
+	if err != nil {
+		return WebhookSubscription{}, err
+	}
+	return WebhookSubscription{
+		ID:          rotated.ID,
+		UserAddress: ownerAddress,
+		URL:         rotated.TargetURL,
+		Secret:      rotated.SigningSecret,
+		EventTypes:  rotated.EventTypes,
+		CreatedAt:   rotated.CreatedAt,
+	}, nil
 }
 
 func generateSecret() (string, error) {
@@ -121,39 +152,39 @@ var deleteWebhookSub = func(ctx context.Context, id uuid.UUID, userAddr string) 
 func (h *APIHandler) HandleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 	userAddr, ok := GetUserAddress(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeAPIError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	var req CreateWebhookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
 	if req.URL == "" {
-		http.Error(w, "url is required", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "url is required")
 		return
 	}
 	if len(req.EventTypes) == 0 {
-		http.Error(w, "event_types is required", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "event_types is required")
 		return
 	}
 
 	if !isSafeURL(req.URL) {
-		http.Error(w, "invalid or unsafe url", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "invalid or unsafe url")
 		return
 	}
 
 	secret, err := generateSecret()
 	if err != nil {
-		http.Error(w, "failed to generate secret", http.StatusInternalServerError)
+		internalError(w, r, "failed to generate webhook secret", err)
 		return
 	}
 
 	sub, err := createWebhookSub(r.Context(), userAddr, req.URL, secret, req.EventTypes)
 	if err != nil {
-		http.Error(w, "failed to create webhook subscription", http.StatusInternalServerError)
+		internalError(w, r, "failed to create webhook subscription", err)
 		return
 	}
 
@@ -165,13 +196,13 @@ func (h *APIHandler) HandleCreateWebhook(w http.ResponseWriter, r *http.Request)
 func (h *APIHandler) HandleGetWebhooks(w http.ResponseWriter, r *http.Request) {
 	userAddr, ok := GetUserAddress(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeAPIError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	subs, err := getWebhookSubs(r.Context(), userAddr)
 	if err != nil {
-		http.Error(w, "failed to query webhooks", http.StatusInternalServerError)
+		internalError(w, r, "failed to query webhooks", err)
 		return
 	}
 
@@ -181,28 +212,94 @@ func (h *APIHandler) HandleGetWebhooks(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *APIHandler) HandleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
+// HandleRotateWebhook rotates the caller's subscription onto a new signing
+// secret. Trust boundary: the request is authorized by the existing JWT
+// middleware and the database update is scoped to the authenticated address;
+// a caller cannot rotate another subscriber's webhook. The generated secret is
+// returned in this response only (like Create), never logged. Subscribers must
+// already accept the previous key on X-ClearLedger-Signature-Previous, or the
+// new secret on X-ClearLedger-Signature, to avoid a delivery gap.
+func (h *APIHandler) HandleRotateWebhook(w http.ResponseWriter, r *http.Request) {
 	userAddr, ok := GetUserAddress(r.Context())
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 
+	overlap := defaultWebhookSecretOverlap
+	if h.cfg != nil && h.cfg.WebhookSecretOverlap > 0 {
+		overlap = h.cfg.WebhookSecretOverlap
+	}
+
+	var req RotateWebhookRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			return
+		}
+	}
+	if req.OverlapSeconds < 0 {
+		http.Error(w, "overlap_seconds must not be negative", http.StatusBadRequest)
+		return
+	}
+	if req.OverlapSeconds > 0 {
+		overlap = time.Duration(req.OverlapSeconds) * time.Second
+	}
+	if overlap > maxWebhookSecretOverlap {
+		http.Error(w, "overlap_seconds exceeds the maximum of 30 days", http.StatusBadRequest)
+		return
+	}
+
+	newSecret, err := generateSecret()
+	if err != nil {
+		http.Error(w, "failed to generate secret", http.StatusInternalServerError)
+		return
+	}
+
+	sub, err := rotateWebhookSecret(r.Context(), id, userAddr, newSecret, overlap)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrWebhookSubscriptionNotFound):
+			http.Error(w, "webhook not found", http.StatusNotFound)
+		case errors.Is(err, db.ErrWebhookRotationInProgress):
+			http.Error(w, "a previous signing secret is still within its overlap window", http.StatusConflict)
+		default:
+			http.Error(w, "failed to rotate webhook secret", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sub)
+}
+
+func (h *APIHandler) HandleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
+	userAddr, ok := GetUserAddress(r.Context())
+	if !ok {
+		writeAPIError(w, r, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	idStr := chi.URLParam(r, "id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		writeAPIError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+
 	affected, err := deleteWebhookSub(r.Context(), id, userAddr)
 	if err != nil {
-		http.Error(w, "failed to delete webhook", http.StatusInternalServerError)
+		internalError(w, r, "failed to delete webhook", err)
 		return
 	}
 
 	if affected == 0 {
-		http.Error(w, "webhook not found", http.StatusNotFound)
+		writeAPIError(w, r, http.StatusNotFound, "webhook not found")
 		return
 	}
 

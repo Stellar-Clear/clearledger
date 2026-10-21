@@ -116,6 +116,10 @@ func BuildEnvelope(eventType string, data map[string]interface{}) (*webhooks.Web
 		occurredAt = v
 	}
 
+	// The listener records which contract-event schema version produced this
+	// data. It is distinct from the webhook envelope's schema_version.
+	eventSchemaVersion := getInt(data, "event_schema_version")
+
 	// Map the internal event type to the public webhook event type
 	publicEventType := mapInternalEventType(eventType)
 
@@ -198,6 +202,7 @@ func BuildEnvelope(eventType string, data map[string]interface{}) (*webhooks.Web
 		}
 	}
 
+	envelope.EventSchemaVersion = eventSchemaVersion
 	return envelope, nil
 }
 

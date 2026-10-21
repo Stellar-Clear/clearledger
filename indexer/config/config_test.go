@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 )
@@ -32,6 +33,7 @@ var configEnvNames = []string{
 	"TRUSTED_PROXY_CIDRS",
 	"RATE_LIMIT_RPS",
 	"WEBHOOK_WORKER_CONCURRENCY",
+	"WEBHOOK_SECRET_OVERLAP",
 	"SENTRY_DSN",
 }
 
@@ -90,6 +92,45 @@ func TestLoadConfigWebhookConcurrency(t *testing.T) {
 			}
 			if cfg.WebhookConcurrency != tc.want {
 				t.Errorf("WebhookConcurrency = %d, want %d for WEBHOOK_WORKER_CONCURRENCY=%q", cfg.WebhookConcurrency, tc.want, tc.value)
+			}
+		})
+	}
+}
+
+// TestLoadConfigWebhookSecretOverlap covers the rotation grace window: a
+// positive duration is honored, unusable values fall back, and an excessive
+// value is clamped so an old signing key cannot live forever.
+func TestLoadConfigWebhookSecretOverlap(t *testing.T) {
+	cases := []struct {
+		value string
+		want  time.Duration
+	}{
+		{"", 24 * time.Hour},
+		{"1h", time.Hour},
+		{"90m", 90 * time.Minute},
+		{"0", 24 * time.Hour},
+		{"-1h", 24 * time.Hour},
+		{"not-a-duration", 24 * time.Hour},
+		{"720h", 30 * 24 * time.Hour},
+	}
+
+	for _, tc := range cases {
+		name := tc.value
+		if name == "" {
+			name = "unset"
+		}
+		t.Run(name, func(t *testing.T) {
+			env := requiredConfigEnv()
+			env["WEBHOOK_SECRET_OVERLAP"] = tc.value
+			setConfigEnv(t, env)
+
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.WebhookSecretOverlap != tc.want {
+				t.Errorf("WebhookSecretOverlap = %v, want %v for WEBHOOK_SECRET_OVERLAP=%q",
+					cfg.WebhookSecretOverlap, tc.want, tc.value)
 			}
 		})
 	}

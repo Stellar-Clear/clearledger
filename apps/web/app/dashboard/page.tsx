@@ -54,8 +54,10 @@ export default function SMEDashboard() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const { isVerified } = useProfile();
-  const createModalRef = useFocusTrap<HTMLDivElement>(showCreateModal, () =>
-    setShowCreateModal(false),
+  const createModalRef = useFocusTrap<HTMLDivElement>(
+    showCreateModal,
+    () => setShowCreateModal(false),
+    { inertBackground: true },
   );
 
   useEffect(() => {

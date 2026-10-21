@@ -11,11 +11,12 @@ import (
 	"sync"
 	"time"
 
+	indexermiddleware "clearledger/indexer/middleware"
 	"github.com/getsentry/sentry-go"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/golang-jwt/jwt/v5"
-	indexermiddleware "clearledger/indexer/middleware"
+	"github.com/google/uuid"
 )
 
 func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
@@ -23,19 +24,19 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				http.Error(w, "Unauthorized: missing token", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "missing token")
 				return
 			}
 
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				http.Error(w, "Unauthorized: invalid header format", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "invalid authorization header")
 				return
 			}
 
 			tokenStr := strings.TrimSpace(parts[1])
 			if tokenStr == "" || strings.ContainsAny(tokenStr, " \t\r\n") {
-				http.Error(w, "Unauthorized: invalid header format", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "invalid authorization header")
 				return
 			}
 
@@ -47,19 +48,19 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 			})
 
 			if err != nil || !token.Valid {
-				http.Error(w, "Unauthorized: invalid or expired token", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "invalid or expired token")
 				return
 			}
 
 			claims, ok := token.Claims.(jwt.MapClaims)
 			if !ok {
-				http.Error(w, "Unauthorized: invalid claims", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "invalid token claims")
 				return
 			}
 
 			sub, ok := claims["sub"].(string)
 			if !ok {
-				http.Error(w, "Unauthorized: missing sub claim", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "missing token subject")
 				return
 			}
 
@@ -84,15 +85,17 @@ func CORSMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 			if origin != "" {
 				if _, ok := originSet[origin]; ok {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Expose-Headers", "X-Next-Cursor")
 					w.Header().Set("Vary", "Origin")
 				} else {
-					w.WriteHeader(http.StatusForbidden)
+					writeAPIError(w, r, http.StatusForbidden, "origin is not allowed")
 					return
 				}
 			}
 
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Expose-Headers", middleware.RequestIDHeader)
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -118,13 +121,12 @@ func RecoveryMiddleware() func(http.Handler) http.Handler {
 					slog.Error("panic recovered in HTTP handler",
 						"error", fmt.Sprintf("%v", rvr),
 						"stack", string(debug.Stack()),
+						"request_id", middleware.GetReqID(r.Context()),
 						"method", r.Method,
 						"path", r.URL.Path,
 					)
 
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					_, _ = w.Write([]byte(`{"error": "internal server error"}`))
+					writeAPIError(w, r, http.StatusInternalServerError, "internal server error")
 				}
 			}()
 			next.ServeHTTP(w, r)
@@ -354,7 +356,7 @@ func RateLimitMiddleware(rl *perClientRateLimiter) func(http.Handler) http.Handl
 			clientKey := getClientKey(r)
 			if !rl.allow(clientKey) {
 				w.Header().Set("Retry-After", "1")
-				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+				writeAPIError(w, r, http.StatusTooManyRequests, "too many requests")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -366,8 +368,8 @@ func NewRouter(h *APIHandler) (*chi.Mux, func()) {
 	r := chi.NewRouter()
 
 	// Global middleware
-	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
+	r.Use(RequestIDMiddleware)
+	r.Use(StructuredRequestLogMiddleware)
 	r.Use(RecoveryMiddleware())
 	r.Use(TrustedProxyMiddleware(h.cfg.TrustedProxyCIDRs))
 	r.Use(CORSMiddleware(h.cfg.CORSAllowedOrigins))
@@ -389,6 +391,27 @@ func NewRouter(h *APIHandler) (*chi.Mux, func()) {
 	}
 
 	// Health check
+	r.Get("/live", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
+		const dependencyTimeout = 2 * time.Second
+		postgresReady := runDependencyCheck(r.Context(), dependencyTimeout, h.dbHealthChecker)
+		sorobanReady := runDependencyCheck(r.Context(), dependencyTimeout, h.sorobanHealthChecker)
+		listenerReady := h.ListenerHealth() != nil && h.ListenerHealth().IsHealthy()
+		dependencies := map[string]string{
+			"postgres":    dependencyStatus(postgresReady),
+			"soroban_rpc": dependencyStatus(sorobanReady),
+			"listener":    dependencyStatus(listenerReady),
+		}
+		status := "ready"
+		code := http.StatusOK
+		if !postgresReady || !sorobanReady || !listenerReady {
+			status = "degraded"
+			code = http.StatusServiceUnavailable
+		}
+		writeJSON(w, code, map[string]interface{}{"status": status, "dependencies": dependencies})
+	})
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -414,6 +437,7 @@ func NewRouter(h *APIHandler) (*chi.Mux, func()) {
 		r.Use(RateLimitMiddleware(rl))
 		r.Get("/stats", h.HandleGetStats)
 		r.Get("/events", h.HandleGetEvents)
+		r.Get("/transactions/{hash}", h.HandleGetTransactionStatus)
 		r.Get("/invoices/{id}", h.HandleGetInvoiceByID)
 		r.Get("/invoices", h.HandleGetInvoices)
 		r.Get("/pool/stats", h.HandleGetPoolStats)
@@ -435,9 +459,14 @@ func NewRouter(h *APIHandler) (*chi.Mux, func()) {
 		r.Use(RateLimitMiddleware(rl))
 		r.With(indexermiddleware.InvoiceRateLimitMiddleware(invoiceLimiter)).Post("/invoices", h.HandleCreateInvoice)
 
+		// API connection diagnostics. Protected because it exposes operational
+		// metadata, though the payload never contains URLs, tokens, or env values.
+		r.Get("/diagnostics", h.HandleGetDiagnostics)
+
 		// Webhooks
 		r.Post("/webhooks", h.HandleCreateWebhook)
 		r.Get("/webhooks", h.HandleGetWebhooks)
+		r.Post("/webhooks/{id}/rotate", h.HandleRotateWebhook)
 		r.Delete("/webhooks/{id}", h.HandleDeleteWebhook)
 	})
 
@@ -447,11 +476,59 @@ func NewRouter(h *APIHandler) (*chi.Mux, func()) {
 	}
 }
 
+// RequestIDMiddleware assigns a fresh server-generated ID to every request.
+// It deliberately ignores client-supplied values so callers cannot forge or
+// collide with IDs used to correlate server logs.
+func RequestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := uuid.NewString()
+		ctx := context.WithValue(r.Context(), middleware.RequestIDKey, requestID)
+		w.Header().Set(middleware.RequestIDHeader, requestID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// StructuredRequestLogMiddleware emits one structured completion record with
+// the same request ID returned to the caller.
+func StructuredRequestLogMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(wrapped, r)
+		status := wrapped.Status()
+		if status == 0 {
+			status = http.StatusOK
+		}
+		slog.InfoContext(r.Context(), "http request completed",
+			"request_id", middleware.GetReqID(r.Context()),
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", status,
+			"duration_ms", time.Since(started).Milliseconds(),
+		)
+	})
+}
+
+func runDependencyCheck(parent context.Context, timeout time.Duration, check func(context.Context) error) bool {
+	if check == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	return check(ctx) == nil
+}
+
+func dependencyStatus(ready bool) string {
+	if ready {
+		return "ready"
+	}
+	return "unavailable"
+}
 func metricsTokenMiddleware(expected string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Authorization") != "Bearer "+expected {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, r)

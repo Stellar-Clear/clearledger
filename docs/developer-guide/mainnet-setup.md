@@ -1,6 +1,8 @@
 # Stellar Mainnet Setup Guide
 
-This guide explains how to configure and deploy ClearLedger to the Stellar Mainnet. It covers environment variables, RPC endpoints, contract deployment, and network switching.
+This guide maps ClearLedger's Testnet configuration to the values and endpoints you would need to target the Stellar Mainnet. It covers environment variables, RPC endpoints, contract deployment, and network switching.
+
+> **Configuration reference only.** Passing through this guide does not make the service production-ready, and Mainnet deployment is not currently supported. See [Production Readiness Gates](../PRODUCTION_READINESS.md) for the audit, deployment, RPC, API, monitoring, wallet, recovery, and compliance work required first.
 
 ## Overview
 

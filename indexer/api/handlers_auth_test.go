@@ -63,6 +63,31 @@ func TestHandleGetAuth_InvalidAddress(t *testing.T) {
 	}
 }
 
+// TestHandleGetAuth_RejectsWrongVersionAddress expects 422 when a valid StrKey
+// uses the wrong version for a signing account (C... contract or S... seed).
+func TestHandleGetAuth_RejectsWrongVersionAddress(t *testing.T) {
+	h := newTestHandler(t)
+	seedKP, _ := keypair.Random()
+
+	for name, address := range map[string]string{
+		"contract": testContractAddress(t),
+		"seed":     seedKP.Seed(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/auth?address="+address, nil)
+			w := httptest.NewRecorder()
+			h.HandleGetAuth(w, req)
+
+			if w.Code != http.StatusUnprocessableEntity {
+				t.Errorf("got status %d, want %d; body: %s", w.Code, http.StatusUnprocessableEntity, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), "invalid address") {
+				t.Errorf("expected field-specific address error, got %q", w.Body.String())
+			}
+		})
+	}
+}
+
 // TestHandleGetAuth_ValidAddress expects 200 and a JSON body with "transaction" and
 // "network_passphrase" fields.
 func TestHandleGetAuth_ValidAddress(t *testing.T) {
@@ -181,12 +206,18 @@ func TestHandlePostAuth_ValidChallenge(t *testing.T) {
 		t.Fatalf("verify challenge: got %d: %s", postW.Code, postW.Body.String())
 	}
 
-	var tokenResp map[string]string
+	var tokenResp struct {
+		Token     string `json:"token"`
+		ExpiresIn int    `json:"expires_in"`
+	}
 	if err := json.NewDecoder(postW.Body).Decode(&tokenResp); err != nil {
 		t.Fatalf("decode token response: %v", err)
 	}
-	if tokenResp["token"] == "" {
+	if tokenResp.Token == "" {
 		t.Error("response missing 'token' field")
+	}
+	if tokenResp.ExpiresIn <= 0 {
+		t.Errorf("response missing a positive 'expires_in' field, got %d", tokenResp.ExpiresIn)
 	}
 }
 

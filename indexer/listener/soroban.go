@@ -18,6 +18,7 @@ import (
 type SorobanEvent struct {
 	ID             string   `json:"id"`
 	ContractID     string   `json:"contractId"`
+	TxHash         string   `json:"txHash,omitempty"`
 	Ledger         int32    `json:"ledger"`
 	LedgerClosedAt string   `json:"ledgerClosedAt"`
 	Topic          []string `json:"topic"`
@@ -31,6 +32,7 @@ type rpcEvent struct {
 	LedgerClosedAt string   `json:"ledgerClosedAt"`
 	ContractID     string   `json:"contractId"`
 	ID             string   `json:"id"`
+	TxHash         string   `json:"txHash"`
 	PagingToken    string   `json:"pagingToken"`
 	Topic          []string `json:"topic"`
 	Value          struct {
@@ -362,7 +364,19 @@ func (l *EventListener) Start(ctx context.Context) error {
 				}
 				continue
 			}
+			// Persist before advancing in-memory state. If this write fails, the
+			// next poll replays the same range; event-log uniqueness makes that
+			// recovery safe after a restart or transient database failure.
+			if err := l.upsertCheckpointFn(ctx, nextLedger); err != nil {
+				slog.Error("Failed to save checkpoint; will replay ledger range", "ledger", nextLedger, "error", err)
+				if l.health != nil {
+					l.health.MarkStopped()
+				}
+				continue
+			}
+
 			backoff = initialBackoff
+			currentLedger = nextLedger
 			if l.health != nil {
 				if l.health.IsHealthy() {
 					l.health.MarkHeartbeat()
@@ -370,16 +384,9 @@ func (l *EventListener) Start(ctx context.Context) error {
 					l.health.MarkStarted()
 				}
 			}
-			currentLedger = nextLedger
 
-			// Remember the header hash of the ledger this checkpoint resumes
-			// from, so the next tick can detect a reorg of it (issue #882).
+			// Remember the durable checkpoint boundary for the reorg guard.
 			l.recordFinalizedLedger(ctx, currentLedger-1)
-
-			// Persist checkpoint so restart resumes from this exact ledger
-			if err := l.upsertCheckpointFn(ctx, currentLedger); err != nil {
-				slog.Error("Failed to save checkpoint", "ledger", currentLedger, "error", err)
-			}
 		}
 	}
 }
@@ -405,6 +412,7 @@ func (l *EventListener) pollEvents(ctx context.Context, startLedger int32) (int3
 		if err != nil {
 			return startLedger, err
 		}
+		api.SetListenerLedgerMetrics(latest, startLedger-1)
 		return latest + 1, nil
 	}
 
@@ -475,6 +483,7 @@ func (l *EventListener) pollEvents(ctx context.Context, startLedger int32) (int3
 			sorobanEv := SorobanEvent{
 				ID:             ev.ID,
 				ContractID:     ev.ContractID,
+				TxHash:         ev.TxHash,
 				Ledger:         ev.Ledger,
 				LedgerClosedAt: ev.LedgerClosedAt,
 				Topic:          ev.Topic,
@@ -508,6 +517,7 @@ func (l *EventListener) pollEvents(ctx context.Context, startLedger int32) (int3
 		}
 		next = safeLedger + 1
 	}
+	api.SetListenerLedgerMetrics(latestLedgerSeq, next-1)
 	return next, nil
 }
 

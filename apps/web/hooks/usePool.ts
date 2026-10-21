@@ -68,8 +68,11 @@ export function usePool() {
     },
     onSuccess: (txHash: string) => {
       clearError();
+      // PoolClient resolves only after Soroban RPC confirms transaction success.
       queryClient.invalidateQueries({ queryKey: ["poolStats"] });
       queryClient.invalidateQueries({ queryKey: ["lpPosition", address] });
+      queryClient.invalidateQueries({ queryKey: ["recentEvents"] });
+      queryClient.invalidateQueries({ queryKey: ["txHistory", address] });
       showSuccessToast("Deposit Complete", txHash);
     },
     onError: (error) => {
@@ -90,6 +93,8 @@ export function usePool() {
       clearError();
       queryClient.invalidateQueries({ queryKey: ["poolStats"] });
       queryClient.invalidateQueries({ queryKey: ["lpPosition", address] });
+      queryClient.invalidateQueries({ queryKey: ["recentEvents"] });
+      queryClient.invalidateQueries({ queryKey: ["txHistory", address] });
       showSuccessToast("Withdrawal Complete", txHash);
     },
     onError: (error) => {

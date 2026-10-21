@@ -33,6 +33,13 @@ type DbInvoice struct {
 	AttestedAt         *int64  `json:"attested_at"`
 }
 
+// InvoiceCursor identifies the final row of a page ordered by created_at and
+// ID. The pair gives the cursor a stable position when rows share timestamps.
+type InvoiceCursor struct {
+	CreatedAt int64  `json:"created_at"`
+	ID        string `json:"id"`
+}
+
 type DbPoolStats struct {
 	TotalDeposits         string    `json:"total_deposits"`
 	TotalFunded           string    `json:"total_funded"`
@@ -167,9 +174,16 @@ func GetInvoiceByID(ctx context.Context, q Querier, id string) (*DbInvoice, erro
 }
 
 func GetInvoicesPage(ctx context.Context, status, issuer string, limit, offset int) ([]*DbInvoice, int, error) {
-	predicates := make([]string, 0, 2)
-	filterArgs := make([]any, 0, 2)
+	invoices, total, _, err := GetFilteredInvoicesPage(ctx, status, issuer, "", nil, limit, offset, nil)
+	return invoices, total, err
+}
 
+// GetFilteredInvoicesPage applies invoice filters and returns a bounded page.
+// When cursor is non-nil, it takes precedence over offset pagination and
+// returns hasMore for building the next cursor.
+func GetFilteredInvoicesPage(ctx context.Context, status, issuer, buyer string, dueDate *int64, limit, offset int, cursor *InvoiceCursor) ([]*DbInvoice, int, bool, error) {
+	predicates := make([]string, 0, 5)
+	filterArgs := make([]any, 0, 5)
 	if status != "" {
 		predicates = append(predicates, fmt.Sprintf("status = $%d", len(filterArgs)+1))
 		filterArgs = append(filterArgs, status)
@@ -177,6 +191,14 @@ func GetInvoicesPage(ctx context.Context, status, issuer string, limit, offset i
 	if issuer != "" {
 		predicates = append(predicates, fmt.Sprintf("issuer = $%d", len(filterArgs)+1))
 		filterArgs = append(filterArgs, issuer)
+	}
+	if buyer != "" {
+		predicates = append(predicates, fmt.Sprintf("buyer = $%d", len(filterArgs)+1))
+		filterArgs = append(filterArgs, buyer)
+	}
+	if dueDate != nil {
+		predicates = append(predicates, fmt.Sprintf("due_date = $%d", len(filterArgs)+1))
+		filterArgs = append(filterArgs, *dueDate)
 	}
 
 	whereClause := ""
@@ -187,11 +209,21 @@ func GetInvoicesPage(ctx context.Context, status, issuer string, limit, offset i
 	countQuery := "SELECT COUNT(*) FROM invoices" + whereClause
 	var total int
 	if err := Pool.QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("queries: count invoices: %w", err)
+		return nil, 0, false, fmt.Errorf("queries: count invoices: %w", err)
 	}
 
 	limitPlaceholder := len(filterArgs) + 1
-	offsetPlaceholder := len(filterArgs) + 2
+	queryArgs := append([]any{}, filterArgs...)
+	if cursor != nil {
+		predicates = append(predicates, fmt.Sprintf("(created_at, id) < ($%d, $%d)", len(queryArgs)+1, len(queryArgs)+2))
+		queryArgs = append(queryArgs, cursor.CreatedAt, cursor.ID)
+	}
+	whereClause = ""
+	if len(predicates) > 0 {
+		whereClause = " WHERE " + strings.Join(predicates, " AND ")
+	}
+	limitPlaceholder = len(queryArgs) + 1
+	queryArgs = append(queryArgs, limit+1)
 	query := fmt.Sprintf(`
 		SELECT 
 			id, issuer, buyer, face_value, discount_bps, funded_amount, due_date, status, created_at,
@@ -199,13 +231,17 @@ func GetInvoicesPage(ctx context.Context, status, issuer string, limit, offset i
 			attestation_agent_id, risk_score_bps, evidence_hash, attested_at
 		FROM invoices%s
 		ORDER BY created_at DESC, id DESC
-		LIMIT $%d OFFSET $%d
-	`, whereClause, limitPlaceholder, offsetPlaceholder)
-	queryArgs := append(append([]any{}, filterArgs...), limit, offset)
+		LIMIT $%d
+	`, whereClause, limitPlaceholder)
+	if cursor == nil {
+		offsetPlaceholder := len(queryArgs) + 1
+		query += fmt.Sprintf(" OFFSET $%d", offsetPlaceholder)
+		queryArgs = append(queryArgs, offset)
+	}
 
 	rows, err := Pool.Query(ctx, query, queryArgs...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("queries: get invoices: %w", err)
+		return nil, 0, false, fmt.Errorf("queries: get invoices: %w", err)
 	}
 	defer rows.Close()
 
@@ -218,14 +254,18 @@ func GetInvoicesPage(ctx context.Context, status, issuer string, limit, offset i
 			&inv.IssuerConfirmed, &inv.BuyerConfirmed, &inv.BuyerConfirmedAt, &inv.RepaidAt,
 			&inv.AttestationAgentID, &inv.RiskScoreBps, &inv.EvidenceHash, &inv.AttestedAt,
 		); err != nil {
-			return nil, 0, fmt.Errorf("queries: scan invoice: %w", err)
+			return nil, 0, false, fmt.Errorf("queries: scan invoice: %w", err)
 		}
 		invoices = append(invoices, &inv)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("queries: iterate invoices: %w", err)
+		return nil, 0, false, fmt.Errorf("queries: iterate invoices: %w", err)
 	}
-	return invoices, total, nil
+	hasMore := len(invoices) > limit
+	if hasMore {
+		invoices = invoices[:limit]
+	}
+	return invoices, total, hasMore, nil
 }
 
 func UpdateInvoiceListed(ctx context.Context, q Querier, id string, status string, discountBps int) error {
@@ -438,18 +478,90 @@ func GetPoolSnapshotHistory(ctx context.Context, limit int) ([]*DbPoolSnapshotHi
 	return history, nil
 }
 
+// Decode state recorded on every events_log row. "decoded" means the event
+// was understood and applied; "unknown_version" and "malformed" rows are kept
+// verbatim so a future listener build can reprocess them.
+const (
+	DecodeStatusDecoded        = "decoded"
+	DecodeStatusUnknownVersion = "unknown_version"
+	DecodeStatusMalformed      = "malformed"
+)
+
+// EventLogRecord is the complete row the listener writes for an event. The
+// metadata fields are the audit trail required to reprocess a row without
+// asking the RPC again.
+type EventLogRecord struct {
+	EventID        string
+	ContractID     string
+	TxHash         string
+	Ledger         int32
+	LedgerClosedAt int64
+	EventType      string
+	SchemaVersion  int
+	DecodeStatus   string
+	DecodeError    string
+	Data           interface{}
+	RawEvent       interface{}
+}
+
+// LogEvent writes a decoded event using the historical signature. New callers
+// that need version/raw-event retention should use LogEventRecord.
 func LogEvent(ctx context.Context, q Querier, eventID, contractID string, ledger int32, ledgerClosedAt int64, eventType string, data interface{}) error {
-	dataBytes, err := json.Marshal(data)
+	return LogEventRecord(ctx, q, &EventLogRecord{
+		EventID:        eventID,
+		ContractID:     contractID,
+		Ledger:         ledger,
+		LedgerClosedAt: ledgerClosedAt,
+		EventType:      eventType,
+		SchemaVersion:  1,
+		DecodeStatus:   DecodeStatusDecoded,
+		Data:           data,
+	})
+}
+
+// LogEventRecord persists an event's decode metadata alongside its payload.
+// RawEvent is stored as JSONB for unknown-version and malformed rows so no
+// bytes of the original event are lost.
+func LogEventRecord(ctx context.Context, q Querier, record *EventLogRecord) error {
+	if record == nil {
+		return fmt.Errorf("queries: log event: nil record")
+	}
+	dataBytes, err := json.Marshal(record.Data)
 	if err != nil {
 		return fmt.Errorf("queries: log event: marshal data: %w", err)
 	}
+	if record.Data == nil {
+		dataBytes = []byte("{}")
+	}
+	var rawBytes []byte
+	if record.RawEvent != nil {
+		rawBytes, err = json.Marshal(record.RawEvent)
+		if err != nil {
+			return fmt.Errorf("queries: log event: marshal raw event: %w", err)
+		}
+	}
+	status := record.DecodeStatus
+	if status == "" {
+		status = DecodeStatusDecoded
+	}
+	schemaVersion := record.SchemaVersion
+	if schemaVersion <= 0 && status == DecodeStatusDecoded {
+		schemaVersion = 1
+	}
 
 	query := `
-		INSERT INTO events_log (event_id, contract_id, ledger, ledger_closed_at, event_type, data)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO events_log (
+			event_id, contract_id, ledger, ledger_closed_at, event_type, data,
+			schema_version, decode_status, decode_error, tx_hash, raw_event
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (event_id) DO NOTHING
 	`
-	_, err = q.Exec(ctx, query, eventID, contractID, ledger, ledgerClosedAt, eventType, dataBytes)
+	_, err = q.Exec(ctx, query,
+		record.EventID, record.ContractID, record.Ledger, record.LedgerClosedAt,
+		record.EventType, dataBytes, schemaVersion, status, record.DecodeError,
+		record.TxHash, rawBytes,
+	)
 	if err != nil {
 		return fmt.Errorf("queries: log event: %w", err)
 	}
@@ -495,15 +607,35 @@ type EventLog struct {
 	ID             int             `json:"id"`
 	EventID        string          `json:"event_id"`
 	ContractID     string          `json:"contract_id"`
+	TxHash         *string         `json:"tx_hash,omitempty"`
 	Ledger         int32           `json:"ledger"`
 	LedgerClosedAt int64           `json:"ledger_closed_at"`
 	EventType      string          `json:"event_type"`
+	SchemaVersion  int             `json:"schema_version"`
+	DecodeStatus   string          `json:"decode_status"`
+	DecodeError    *string         `json:"decode_error,omitempty"`
 	Data           json.RawMessage `json:"data"`
+	RawEvent       json.RawMessage `json:"raw_event,omitempty"`
+}
+
+const eventLogColumns = `id, event_id, contract_id, tx_hash, ledger, ledger_closed_at,
+	event_type, schema_version, decode_status, decode_error, data, raw_event`
+
+func scanEventLog(row interface{ Scan(...any) error }) (*EventLog, error) {
+	var ev EventLog
+	if err := row.Scan(
+		&ev.ID, &ev.EventID, &ev.ContractID, &ev.TxHash, &ev.Ledger,
+		&ev.LedgerClosedAt, &ev.EventType, &ev.SchemaVersion,
+		&ev.DecodeStatus, &ev.DecodeError, &ev.Data, &ev.RawEvent,
+	); err != nil {
+		return nil, err
+	}
+	return &ev, nil
 }
 
 func GetRecentEvents(ctx context.Context, limit int) ([]*EventLog, error) {
 	query := `
-		SELECT id, event_id, contract_id, ledger, ledger_closed_at, event_type, data
+		SELECT ` + eventLogColumns + `
 		FROM events_log
 		ORDER BY ledger_closed_at DESC, id DESC
 		LIMIT $1
@@ -516,17 +648,128 @@ func GetRecentEvents(ctx context.Context, limit int) ([]*EventLog, error) {
 
 	var events []*EventLog
 	for rows.Next() {
-		var ev EventLog
-		err := rows.Scan(&ev.ID, &ev.EventID, &ev.ContractID, &ev.Ledger, &ev.LedgerClosedAt, &ev.EventType, &ev.Data)
+		ev, err := scanEventLog(rows)
 		if err != nil {
 			return nil, fmt.Errorf("queries: scan event: %w", err)
 		}
-		events = append(events, &ev)
+		events = append(events, ev)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("queries: iterate events: %w", err)
 	}
 	return events, nil
+}
+
+// GetEventsByDecodeStatus returns retained events with the given decode
+// status, newest first. It is the reprocessing entry point for rows the
+// current listener build could not decode.
+func GetEventsByDecodeStatus(ctx context.Context, status string, limit int) ([]*EventLog, error) {
+	query := `
+		SELECT ` + eventLogColumns + `
+		FROM events_log
+		WHERE decode_status = $1
+		ORDER BY ledger ASC, id ASC
+		LIMIT $2
+	`
+	rows, err := Pool.Query(ctx, query, status, limit)
+	if err != nil {
+		return nil, fmt.Errorf("queries: get events by decode status: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*EventLog
+	for rows.Next() {
+		ev, err := scanEventLog(rows)
+		if err != nil {
+			return nil, fmt.Errorf("queries: scan event by decode status: %w", err)
+		}
+		events = append(events, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("queries: iterate events by decode status: %w", err)
+	}
+	return events, nil
+}
+
+// GetRecentEventsPage returns events before the supplied stable tuple cursor.
+// The cursor uses the same ledger_closed_at/id ordering as the initial page.
+func GetRecentEventsPage(ctx context.Context, limit int, beforeTimestamp int64, beforeID int) ([]*EventLog, error) {
+	query := `
+		SELECT id, event_id, contract_id, ledger, ledger_closed_at, event_type, data
+		FROM events_log
+		WHERE (ledger_closed_at, id) < ($1, $2)
+		ORDER BY ledger_closed_at DESC, id DESC
+		LIMIT $3
+	`
+	rows, err := Pool.Query(ctx, query, beforeTimestamp, beforeID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("queries: get recent events page: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]*EventLog, 0, limit)
+	for rows.Next() {
+		var ev EventLog
+		if err := rows.Scan(&ev.ID, &ev.EventID, &ev.ContractID, &ev.Ledger, &ev.LedgerClosedAt, &ev.EventType, &ev.Data); err != nil {
+			return nil, fmt.Errorf("queries: scan event page: %w", err)
+		}
+		events = append(events, &ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("queries: iterate event page: %w", err)
+	}
+	return events, nil
+}
+
+// GetUnknownVersionEvents returns retained events whose schema version this
+// listener build did not recognize.
+func GetUnknownVersionEvents(ctx context.Context, limit int) ([]*EventLog, error) {
+	return GetEventsByDecodeStatus(ctx, DecodeStatusUnknownVersion, limit)
+}
+
+// GetUndecodedEvents returns every retained row that was not applied:
+// unknown versions and malformed known versions.
+func GetUndecodedEvents(ctx context.Context, limit int) ([]*EventLog, error) {
+	query := `
+		SELECT ` + eventLogColumns + `
+		FROM events_log
+		WHERE decode_status <> $1
+		ORDER BY ledger ASC, id ASC
+		LIMIT $2
+	`
+	rows, err := Pool.Query(ctx, query, DecodeStatusDecoded, limit)
+	if err != nil {
+		return nil, fmt.Errorf("queries: get undecoded events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*EventLog
+	for rows.Next() {
+		ev, err := scanEventLog(rows)
+		if err != nil {
+			return nil, fmt.Errorf("queries: scan undecoded event: %w", err)
+		}
+		events = append(events, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("queries: iterate undecoded events: %w", err)
+	}
+	return events, nil
+}
+
+// UpdateEventDecodeStatus is used by reprocessing tooling: after a row has
+// been decoded and applied, its status can be advanced without changing the
+// original event identity or payload.
+func UpdateEventDecodeStatus(ctx context.Context, q Querier, eventID, status, decodeError string) error {
+	_, err := q.Exec(ctx, `
+		UPDATE events_log
+		SET decode_status = $2, decode_error = $3
+		WHERE event_id = $1
+	`, eventID, status, decodeError)
+	if err != nil {
+		return fmt.Errorf("queries: update event decode status: %w", err)
+	}
+	return nil
 }
 
 func GetLatestProcessedLedger(ctx context.Context) (int32, error) {

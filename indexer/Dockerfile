@@ -50,8 +50,9 @@ ENV INDEXER_MIGRATIONS_DIR=/app/db/migrations \
 USER indexer
 EXPOSE 8080
 
-# /health returns 503 while the database or listener is unavailable.
+# Keep container liveness independent of downstream services. Use /ready for
+# orchestration readiness probes.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -q -O- "http://127.0.0.1:${API_PORT}/health" >/dev/null 2>&1 || exit 1
+  CMD wget -q -O- "http://127.0.0.1:${API_PORT}/live" >/dev/null 2>&1 || exit 1
 
 CMD ["/app/clearledger-indexer"]

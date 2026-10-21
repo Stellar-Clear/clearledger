@@ -108,3 +108,7 @@ curl -sS https://soroban-testnet.stellar.org/health
 
 Use an alternative compatible Testnet RPC provider only after updating both
 frontend and indexer configuration so they remain on the same network.
+
+For retry/backoff behavior, safe restarts, reorg halts, database restores,
+ledger-gap backfills, and webhook replays, use the
+[Indexer Operations Runbook](indexer-operations.md).
