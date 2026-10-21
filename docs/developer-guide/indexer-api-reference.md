@@ -11,7 +11,7 @@ client-supplied `X-Request-Id` is replaced by the server.
 
 ## GET /health
 
-Health check. Returns 200 if the indexer is running.
+Legacy health check for the listener and PostgreSQL. Returns 200 when both are healthy.
 
 ```json
 { "status": "ok" }
@@ -19,6 +19,16 @@ Health check. Returns 200 if the indexer is running.
 
 Returns 503 with `{"status": "degraded", "error": "..."}` when the listener or database is unavailable.
 
+## GET /live
+
+Process liveness only. It always returns 200 while the API process can serve
+requests and does not check PostgreSQL, Soroban RPC, or the ledger listener.
+
+## GET /ready
+
+Dependency readiness. Returns 200 with `status: "ready"` when PostgreSQL,
+Soroban RPC, and the ledger listener are healthy; otherwise it returns 503
+with `status: "degraded"` and a safe status for each dependency.
 ## GET /diagnostics
 
 Reports whether each external API-backed feature is configured and reachable.
@@ -67,8 +77,14 @@ Error responses use `text/plain` format (via `http.Error`), not JSON:
 
 ```
 invoice not found
-invalid face value
+invalid buyer address: malformed Stellar StrKey
+invalid buyer address: expected a Stellar account address (G...)
 ```
+
+Public-key fields are decoded as Stellar StrKeys before any Soroban operation is
+built. Malformed values (including a valid-looking address with a bad checksum)
+return `400`, while a well-formed StrKey with the wrong version (for example a
+contract `C...` address in an account field) returns `422`.
 
 ## GET /invoices
 
@@ -78,8 +94,11 @@ Returns invoices with optional filtering.
 
 - `status` — filter by status: `Created`, `Listed`, `Funded`, `Active`, `Confirmed`, `Repaid`, `Defaulted`
 - `issuer` — filter by issuer Stellar address
+- `buyer` — filter by buyer Stellar address
+- `due_date` — exact due-date Unix timestamp in seconds
 - `page` — page number (default: 1)
 - `limit` — results per page (default: 20, max: 100)
+- `cursor` — opaque `next_cursor` from the previous response; cannot be combined with `page`
 
 **Response:**
 
@@ -101,9 +120,14 @@ Returns invoices with optional filtering.
   "total": 47,
   "page": 1,
   "limit": 20,
-  "totalPages": 3
+  "totalPages": 3,
+  "next_cursor": "eyJjcmVhdGVkX2F0IjoxNzQ4MDAwMDAwLCJpZCI6ImFiYzEyMy4uLiJ9"
 }
 ```
+
+Cursor pagination orders invoices by `created_at DESC, id DESC`. Keep the
+returned cursor unchanged when requesting the next page; the value is empty
+when no further results are available.
 
 ## GET /invoices/:id
 
@@ -175,7 +199,9 @@ Requests a SEP-10 authentication challenge for a Stellar account. No JWT require
 
 **Query parameters:**
 
-- `address` — the Stellar public key to authenticate (required)
+- `address` — the Stellar account address (`G...`) to authenticate (required).
+  Malformed StrKeys return `400`; a valid contract (`C...`) or seed (`S...`)
+  StrKey returns `422`.
 
 **Response:**
 
@@ -215,7 +241,7 @@ Creates an off-chain/indexed invoice record. **Requires JWT** (`Authorization: B
 
 ```json
 {
-  "buyer": "GBUYERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "buyer": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
   "face_value": "10000000000",
   "due_date": 1790000000
 }
@@ -223,6 +249,12 @@ Creates an off-chain/indexed invoice record. **Requires JWT** (`Authorization: B
 
 **Accepted ranges:**
 
+- `buyer` — Stellar account address (`G...`). The value is StrKey-decoded before
+  the transaction is built: a malformed address or bad checksum returns
+  `400 invalid buyer address: malformed Stellar StrKey`, and a wrong-version
+  StrKey such as a contract (`C...`) or seed (`S...`) returns
+  `422 invalid buyer address: expected a Stellar account address (G...)`.
+  The authenticated issuer from the JWT is validated the same way.
 - `face_value` — decimal string, strictly positive, and at most `2^128 - 1`
   (i.e. `340282366920938463463374607431768211455`). Values outside this range,
   non-numeric strings, or strings longer than 40 digits are rejected with

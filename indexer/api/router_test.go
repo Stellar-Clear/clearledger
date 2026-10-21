@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -153,6 +154,71 @@ func TestHealthEndpoint_Returns200WhenListenerAndDBAreHealthy(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), `"status": "ok"`) {
 		t.Fatalf("expected healthy payload, got %s", rr.Body.String())
+	}
+}
+
+func TestReadinessReportsEachDependencyWithoutLeakingErrors(t *testing.T) {
+	tests := []struct {
+		name            string
+		dbErr           error
+		rpcErr          error
+		listenerHealthy bool
+		wantStatus      int
+		wantPostgres    string
+		wantSoroban     string
+		wantListener    string
+	}{
+		{name: "all ready", listenerHealthy: true, wantStatus: http.StatusOK, wantPostgres: "ready", wantSoroban: "ready", wantListener: "ready"},
+		{name: "postgres unavailable", dbErr: errors.New("private database details"), listenerHealthy: true, wantStatus: http.StatusServiceUnavailable, wantPostgres: "unavailable", wantSoroban: "ready", wantListener: "ready"},
+		{name: "soroban unavailable", rpcErr: errors.New("provider URL and key"), listenerHealthy: true, wantStatus: http.StatusServiceUnavailable, wantPostgres: "ready", wantSoroban: "unavailable", wantListener: "ready"},
+		{name: "listener stopped", listenerHealthy: false, wantStatus: http.StatusServiceUnavailable, wantPostgres: "ready", wantSoroban: "ready", wantListener: "unavailable"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newTestHandler(t)
+			h.dbHealthChecker = func(context.Context) error { return tt.dbErr }
+			h.sorobanHealthChecker = func(context.Context) error { return tt.rpcErr }
+			if tt.listenerHealthy {
+				h.ListenerHealth().MarkStarted()
+			}
+			router, stop := NewRouter(h)
+			t.Cleanup(stop)
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/ready", nil))
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("status=%d want %d body=%s", rr.Code, tt.wantStatus, rr.Body.String())
+			}
+			var body struct {
+				Status       string            `json:"status"`
+				Dependencies map[string]string `json:"dependencies"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode readiness response: %v", err)
+			}
+			wantOverall := "ready"
+			if tt.wantStatus != http.StatusOK {
+				wantOverall = "degraded"
+			}
+			if body.Status != wantOverall || body.Dependencies["postgres"] != tt.wantPostgres || body.Dependencies["soroban_rpc"] != tt.wantSoroban || body.Dependencies["listener"] != tt.wantListener {
+				t.Fatalf("readiness response = %+v", body)
+			}
+			if strings.Contains(rr.Body.String(), "private database details") || strings.Contains(rr.Body.String(), "provider URL and key") {
+				t.Fatalf("response leaked dependency error: %s", rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestLivenessDoesNotCheckDependencies(t *testing.T) {
+	h := newTestHandler(t)
+	h.dbHealthChecker = func(context.Context) error { t.Fatal("liveness checked postgres"); return nil }
+	h.sorobanHealthChecker = func(context.Context) error { t.Fatal("liveness checked Soroban"); return nil }
+	router, stop := NewRouter(h)
+	t.Cleanup(stop)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/live", nil))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"status":"ok"`) {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

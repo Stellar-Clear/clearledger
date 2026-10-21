@@ -185,6 +185,74 @@ func TestGetInvoicesPage(t *testing.T) {
 	_ = total2
 }
 
+func TestGetFilteredInvoicesPage_Integration(t *testing.T) {
+	skipIfNoDB(t)
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	issuer := "test-issuer-" + suffix
+	otherIssuer := "other-issuer-" + suffix
+	buyer := "test-buyer-" + suffix
+	otherBuyer := "other-buyer-" + suffix
+	dueDate := int64(1_800_000_000)
+
+	invoices := []*DbInvoice{
+		{ID: "cursor-a-" + suffix, Issuer: issuer, Buyer: buyer, FaceValue: "100", FundedAmount: "0", DueDate: dueDate, Status: "Created", CreatedAt: 10},
+		{ID: "cursor-b-" + suffix, Issuer: issuer, Buyer: buyer, FaceValue: "100", FundedAmount: "0", DueDate: dueDate, Status: "Created", CreatedAt: 10},
+		{ID: "cursor-c-" + suffix, Issuer: issuer, Buyer: buyer, FaceValue: "100", FundedAmount: "0", DueDate: dueDate, Status: "Created", CreatedAt: 9},
+		{ID: "cursor-status-" + suffix, Issuer: issuer, Buyer: buyer, FaceValue: "100", FundedAmount: "0", DueDate: dueDate, Status: "Repaid", CreatedAt: 8},
+		{ID: "cursor-issuer-" + suffix, Issuer: otherIssuer, Buyer: buyer, FaceValue: "100", FundedAmount: "0", DueDate: dueDate, Status: "Created", CreatedAt: 7},
+		{ID: "cursor-buyer-" + suffix, Issuer: issuer, Buyer: otherBuyer, FaceValue: "100", FundedAmount: "0", DueDate: dueDate, Status: "Created", CreatedAt: 6},
+		{ID: "cursor-due-" + suffix, Issuer: issuer, Buyer: buyer, FaceValue: "100", FundedAmount: "0", DueDate: dueDate + 1, Status: "Created", CreatedAt: 5},
+	}
+	for _, invoice := range invoices {
+		if _, err := InsertInvoice(ctx, Pool, invoice); err != nil {
+			t.Fatalf("InsertInvoice %s: %v", invoice.ID, err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, invoice := range invoices {
+			_, _ = Pool.Exec(ctx, "DELETE FROM invoices WHERE id = $1", invoice.ID)
+		}
+	})
+
+	firstPage, total, hasMore, err := GetFilteredInvoicesPage(ctx, "Created", issuer, buyer, &dueDate, 2, 0, nil)
+	if err != nil {
+		t.Fatalf("first filtered page: %v", err)
+	}
+	if total != 3 || len(firstPage) != 2 || !hasMore {
+		t.Fatalf("first page total=%d len=%d hasMore=%v; want 3, 2, true", total, len(firstPage), hasMore)
+	}
+	if firstPage[0].ID != invoices[1].ID || firstPage[1].ID != invoices[0].ID {
+		t.Fatalf("same-timestamp order = [%s, %s], want [%s, %s]", firstPage[0].ID, firstPage[1].ID, invoices[1].ID, invoices[0].ID)
+	}
+
+	cursor := &InvoiceCursor{CreatedAt: firstPage[1].CreatedAt, ID: firstPage[1].ID}
+	secondPage, secondTotal, secondHasMore, err := GetFilteredInvoicesPage(ctx, "Created", issuer, buyer, &dueDate, 2, 0, cursor)
+	if err != nil {
+		t.Fatalf("second filtered page: %v", err)
+	}
+	if secondTotal != total || len(secondPage) != 1 || secondHasMore || secondPage[0].ID != invoices[2].ID {
+		t.Fatalf("second page total=%d rows=%v hasMore=%v; want total %d and only %s", secondTotal, invoiceIDs(secondPage), secondHasMore, total, invoices[2].ID)
+	}
+
+	wrongDueDate := dueDate + 2
+	noRows, noRowsTotal, noRowsMore, err := GetFilteredInvoicesPage(ctx, "Created", issuer, buyer, &wrongDueDate, 2, 0, nil)
+	if err != nil {
+		t.Fatalf("empty filtered page: %v", err)
+	}
+	if len(noRows) != 0 || noRowsTotal != 0 || noRowsMore {
+		t.Fatalf("empty filter returned rows=%v total=%d hasMore=%v", invoiceIDs(noRows), noRowsTotal, noRowsMore)
+	}
+}
+
+func invoiceIDs(invoices []*DbInvoice) []string {
+	ids := make([]string, len(invoices))
+	for i, invoice := range invoices {
+		ids[i] = invoice.ID
+	}
+	return ids
+}
+
 func TestGetPoolStats_Empty(t *testing.T) {
 	skipIfNoDB(t)
 

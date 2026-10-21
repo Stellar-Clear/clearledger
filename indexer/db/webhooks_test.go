@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -484,4 +485,67 @@ func ExampleCreateWebhookSubscription() {
 		return
 	}
 	_, _ = fmt.Printf("Created subscription: %s\n", sub.ID)
+}
+
+func TestRotateWebhookSigningSecret(t *testing.T) {
+	skipIfNoDBWebhooks(t)
+
+	ctx := context.Background()
+	sub := &WebhookSubscription{
+		TargetURL:     "https://example.com/webhook-rotation",
+		EventTypes:    []string{"invoice.created"},
+		SigningSecret: "old-secret",
+		Active:        true,
+	}
+	if err := CreateWebhookSubscription(ctx, sub); err != nil {
+		t.Fatalf("CreateWebhookSubscription: %v", err)
+	}
+	t.Cleanup(func() {
+		if Pool != nil {
+			_, _ = Pool.Exec(ctx, "DELETE FROM webhook_deliveries WHERE subscription_id = $1", sub.ID)
+			_, _ = Pool.Exec(ctx, "DELETE FROM webhook_subscriptions WHERE id = $1", sub.ID)
+		}
+	})
+
+	rotated, err := RotateWebhookSigningSecret(ctx, sub.ID, "", "new-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("RotateWebhookSigningSecret: %v", err)
+	}
+	if rotated.SigningSecret != "new-secret" {
+		t.Errorf("active secret = %q, want new-secret", rotated.SigningSecret)
+	}
+	if rotated.PreviousSigningSecret != "old-secret" {
+		t.Errorf("previous secret = %q, want old-secret", rotated.PreviousSigningSecret)
+	}
+	if rotated.PreviousSigningSecretExpiresAt == nil || !rotated.PreviousSigningSecretExpiresAt.After(time.Now()) {
+		t.Errorf("previous expiry = %v, want a future timestamp", rotated.PreviousSigningSecretExpiresAt)
+	}
+
+	// A second rotation while the previous key is still valid would discard a
+	// key the subscriber may still be using.
+	if _, err := RotateWebhookSigningSecret(ctx, sub.ID, "", "third-secret", time.Hour); !errors.Is(err, ErrWebhookRotationInProgress) {
+		t.Errorf("second rotation error = %v, want ErrWebhookRotationInProgress", err)
+	}
+
+	// The API scopes rotations to the authenticated owner.
+	if _, err := RotateWebhookSigningSecret(ctx, sub.ID, "GNOTTHEOWNER", "third-secret", time.Hour); !errors.Is(err, ErrWebhookSubscriptionNotFound) {
+		t.Errorf("owner mismatch error = %v, want ErrWebhookSubscriptionNotFound", err)
+	}
+
+	// Once the overlap expires, rotating again promotes the key that was
+	// active during the previous window and keeps "new-secret" as previous.
+	if _, err := Pool.Exec(ctx,
+		"UPDATE webhook_subscriptions SET previous_signing_secret_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id = $1",
+		sub.ID,
+	); err != nil {
+		t.Fatalf("expire overlap: %v", err)
+	}
+	rotated, err = RotateWebhookSigningSecret(ctx, sub.ID, "", "third-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("rotation after expiry: %v", err)
+	}
+	if rotated.SigningSecret != "third-secret" || rotated.PreviousSigningSecret != "new-secret" {
+		t.Errorf("rotation after expiry = (active %q, previous %q), want (third-secret, new-secret)",
+			rotated.SigningSecret, rotated.PreviousSigningSecret)
+	}
 }

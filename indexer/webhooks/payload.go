@@ -45,13 +45,16 @@ func AllEventTypes() []EventType {
 
 // WebhookEnvelope is the top-level payload delivered to subscribers.
 type WebhookEnvelope struct {
-	SchemaVersion string          `json:"schema_version"`
-	EventType     EventType       `json:"event_type"`
-	EventID       string          `json:"event_id"`
-	OccurredAt    time.Time       `json:"occurred_at"`
-	Ledger        uint32          `json:"ledger"`
-	ContractID    string          `json:"contract_id"`
-	Data          json.RawMessage `json:"data"`
+	SchemaVersion string `json:"schema_version"`
+	// EventSchemaVersion is the contract event payload version the listener
+	// decoded (the schema_version above versions the webhook envelope itself).
+	EventSchemaVersion int             `json:"event_schema_version,omitempty"`
+	EventType          EventType       `json:"event_type"`
+	EventID            string          `json:"event_id"`
+	OccurredAt         time.Time       `json:"occurred_at"`
+	Ledger             uint32          `json:"ledger"`
+	ContractID         string          `json:"contract_id"`
+	Data               json.RawMessage `json:"data"`
 }
 
 // InvoiceEventData is the payload for invoice lifecycle events.

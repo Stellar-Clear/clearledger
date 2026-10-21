@@ -2,7 +2,7 @@ package listener
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -487,42 +487,144 @@ func parseU128Pair(val xdr.ScVal) (string, string) {
 	return primary, secondary
 }
 
-// handleEvent applies one contract event atomically. The event's state
-// change (invoice insert/update), its events_log row — which is what marks
-// the event as processed for de-duplication — and its webhook_deliveries
-// rows are all written in a single transaction (issue #925). Any failure
-// rolls the whole unit of work back and is returned to the caller, so the
-// poller retries the ledger instead of advancing past a half-processed event.
-func (l *EventListener) handleEvent(ctx context.Context, event SorobanEvent) error {
-	if len(event.Topic) == 0 {
-		return fmt.Errorf("event topic is empty")
+// retainedRawEvent is the lossless representation of an event this listener
+// could not decode. Topics and Value stay base64/XDR exactly as the RPC
+// returned them, and the contract/transaction/ledger identifiers make the row
+// replayable without another getEvents call.
+type retainedRawEvent struct {
+	ID             string   `json:"id"`
+	ContractID     string   `json:"contract_id"`
+	TxHash         string   `json:"tx_hash,omitempty"`
+	Ledger         int32    `json:"ledger"`
+	LedgerClosedAt string   `json:"ledger_closed_at,omitempty"`
+	Topics         []string `json:"topics"`
+	Value          string   `json:"value"`
+}
+
+func rawEventForRetention(event SorobanEvent) retainedRawEvent {
+	return retainedRawEvent{
+		ID:             event.ID,
+		ContractID:     event.ContractID,
+		TxHash:         event.TxHash,
+		Ledger:         event.Ledger,
+		LedgerClosedAt: event.LedgerClosedAt,
+		Topics:         event.Topic,
+		Value:          event.Value,
+	}
+}
+
+// persistUndecodedEvent retains an event whose version is unknown or whose
+// known-version payload was malformed. It deliberately writes no invoice state
+// and enqueues no webhook deliveries: only the raw row, marked with its decode
+// status, so it can be reprocessed after a listener upgrade.
+func (l *EventListener) persistUndecodedEvent(ctx context.Context, event SorobanEvent, res *ResolvedEvent, decodeErr *EventDecodeError) error {
+	name := ""
+	version := 0
+	if res != nil {
+		name = res.Name
+		version = res.Version
+	}
+	if name == "" {
+		name = "unknown"
+	}
+	status := db.DecodeStatusMalformed
+	if decodeErr != nil && decodeErr.Status != "" {
+		status = decodeErr.Status
+	}
+	errText := ""
+	if decodeErr != nil {
+		errText = decodeErr.Error()
 	}
 
-	var topicVal xdr.ScVal
-	err := xdr.SafeUnmarshalBase64(event.Topic[0], &topicVal)
+	raw := rawEventForRetention(event)
+	err := db.WithTx(ctx, func(tx pgx.Tx) error {
+		return db.LogEventRecord(ctx, tx, &db.EventLogRecord{
+			EventID:        event.ID,
+			ContractID:     event.ContractID,
+			TxHash:         event.TxHash,
+			Ledger:         event.Ledger,
+			LedgerClosedAt: ledgerClosedAtUnix(event.LedgerClosedAt),
+			EventType:      name,
+			SchemaVersion:  version,
+			DecodeStatus:   status,
+			DecodeError:    errText,
+			// Keep the raw event in data too: consumers of events_log that
+			// only read data still see every retained payload.
+			Data:     raw,
+			RawEvent: raw,
+		})
+	})
 	if err != nil {
-		return fmt.Errorf("parse first topic: %w", err)
+		return fmt.Errorf("retain %s event %s: %w", status, event.ID, err)
 	}
-	if topicVal.Sym == nil {
-		return fmt.Errorf("first topic is not a symbol")
+
+	slog.Warn("Retained undecoded event",
+		"event_id", event.ID, "event", name, "schema_version", version,
+		"decode_status", status, "contract_id", event.ContractID, "ledger", event.Ledger)
+	return nil
+}
+
+func ledgerClosedAtUnix(value string) int64 {
+	if value == "" {
+		return time.Now().Unix()
 	}
-	eventName := string(*topicVal.Sym)
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t.Unix()
+	}
+	return time.Now().Unix()
+}
+
+// handleEvent applies one contract event atomically. The event is first
+// resolved with its schema version: known v1 payloads are validated by typed
+// decoders, while unknown/newer versions and malformed known payloads are
+// retained raw instead of being dropped or crashing the poller. The event's
+// state change (invoice insert/update), its events_log row — which is what
+// marks the event as processed for de-duplication — and its
+// webhook_deliveries rows are all written in a single transaction for events
+// that decode successfully (issue #925).
+func (l *EventListener) handleEvent(ctx context.Context, event SorobanEvent) error {
+	originalEvent := event
+	resolved, decodeErr := ResolveEvent(originalEvent)
+	if decodeErr != nil {
+		var classified *EventDecodeError
+		if errors.As(decodeErr, &classified) {
+			if err := l.persistUndecodedEvent(ctx, originalEvent, resolved, classified); err != nil {
+				return err
+			}
+			// Unknown versions are expected during a contract rollout and are
+			// not an indexing failure. Malformed known payloads are retained
+			// too, but surface the error once so operators see the bad event;
+			// the retained row makes the retry a no-op.
+			if classified.Status == db.DecodeStatusUnknownVersion {
+				return nil
+			}
+		}
+		return decodeErr
+	}
+
+	if _, err := DecodeTypedEvent(resolved); err != nil {
+		var classified *EventDecodeError
+		if errors.As(err, &classified) {
+			if persistErr := l.persistUndecodedEvent(ctx, originalEvent, resolved, classified); persistErr != nil {
+				return persistErr
+			}
+			return err
+		}
+		if errors.Is(err, ErrUnhandledEvent) {
+			slog.Debug("Skipping unhandled contract event", "name", resolved.Name)
+			return nil
+		}
+		return err
+	}
 
 	serverKP, err := api.GetServerKeypair(l.cfg.ServerSeed)
 	if err != nil {
 		return fmt.Errorf("get server keypair: %w", err)
 	}
 
-	// Parse ledger closed time
-	ledgerClosedAt := time.Now().Unix()
-	if event.LedgerClosedAt != "" {
-		if t, err := time.Parse(time.RFC3339, event.LedgerClosedAt); err == nil {
-			ledgerClosedAt = t.Unix()
-		}
-	}
-
-	var data map[string]interface{}
-	_ = json.Unmarshal([]byte(event.Value), &data) // Unmarshal if it's JSON, ignore if it fails
+	ledgerClosedAt := ledgerClosedAtUnix(resolved.Event.LedgerClosedAt)
+	event = resolved.Event
+	eventName := resolved.Name
 
 	return db.WithTx(ctx, func(tx pgx.Tx) error {
 		// logData is the structured payload persisted with the event in
@@ -599,17 +701,30 @@ func (l *EventListener) handleEvent(ctx context.Context, event SorobanEvent) err
 		// Mark the event processed in the same transaction as the state
 		// change: a failed insert must roll the state change back (and vice
 		// versa) so the poller re-processes a consistent unit of work instead
-		// of advancing past a half-applied event.
-		if err := db.LogEvent(ctx, tx, event.ID, event.ContractID, event.Ledger, ledgerClosedAt, eventName, logData); err != nil {
+		// of advancing past a half-applied event. The raw event is kept for
+		// every row, decoded or not, so no payload bytes are ever lost.
+		if err := db.LogEventRecord(ctx, tx, &db.EventLogRecord{
+			EventID:        originalEvent.ID,
+			ContractID:     originalEvent.ContractID,
+			TxHash:         originalEvent.TxHash,
+			Ledger:         originalEvent.Ledger,
+			LedgerClosedAt: ledgerClosedAt,
+			EventType:      eventName,
+			SchemaVersion:  resolved.Version,
+			DecodeStatus:   db.DecodeStatusDecoded,
+			Data:           logData,
+			RawEvent:       rawEventForRetention(originalEvent),
+		}); err != nil {
 			return fmt.Errorf("log event: %w", err)
 		}
 
 		// Enqueue webhook deliveries on the same transaction (issue #925):
 		// the fan-out either commits with the event or is retried with it.
-		// Events the switch above does not recognise never reach this point —
-		// the default branch skips them before any row is written.
+		// Undecoded events never reach this point.
 		if l.dispatcher != nil {
-			if err := l.dispatcher.EnqueueDeliveries(ctx, tx, eventName, l.webhookDispatchData(ctx, tx, eventName, event, ledgerClosedAt, logData)); err != nil {
+			dispatchData := l.webhookDispatchData(ctx, tx, eventName, event, ledgerClosedAt, logData)
+			dispatchData["event_schema_version"] = resolved.Version
+			if err := l.dispatcher.EnqueueDeliveries(ctx, tx, eventName, dispatchData); err != nil {
 				return fmt.Errorf("enqueue webhook deliveries: %w", err)
 			}
 		}

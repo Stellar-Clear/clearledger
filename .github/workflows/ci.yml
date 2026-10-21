@@ -71,8 +71,14 @@ jobs:
           NEXT_PUBLIC_POOL_CONTRACT_ID: CAKEWH7SJCXGV2MH2WZYIX3QDPTSSBQFXYVYBOWAGLNBBZMPLE2US6CS
           NEXT_PUBLIC_ESCROW_CONTRACT_ID: CAJWGUKDTTC3SKN4RAAY72J4DVIIYSCFHX6GIMNTT22ABMISJK4GBCEH
 
+      - name: Check SDK build artifacts
+        run: pnpm check:sdk-artifacts
+
       - name: Run Unit Tests
         run: pnpm test
+
+      - name: Test workspace scripts
+        run: pnpm test:scripts
 
       - name: Lint SDK
         run: pnpm --filter @clearledger/sdk lint

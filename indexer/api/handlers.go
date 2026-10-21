@@ -23,27 +23,30 @@ import (
 )
 
 type APIHandler struct {
-	cfg             *config.Config
-	serverKP        *keypair.Full
-	statsMu         sync.RWMutex
-	statsData       *db.ProtocolStats
-	statsCached     time.Time
-	challengeMu     sync.Mutex
-	usedChallenges  map[string]time.Time
-	listenerHealth  *ListenerHealth
-	dbHealthChecker func(context.Context) error
+	cfg                  *config.Config
+	serverKP             *keypair.Full
+	statsMu              sync.RWMutex
+	statsData            *db.ProtocolStats
+	statsCached          time.Time
+	challengeMu          sync.Mutex
+	usedChallenges       map[string]time.Time
+	listenerHealth       *ListenerHealth
+	dbHealthChecker      func(context.Context) error
+	sorobanHealthChecker func(context.Context) error
+	callSorobanRPCFn     func(context.Context, string, string, interface{}, interface{}) error
 
 	// dependency-injectable storage and contract readers. Defaults are wired
 	// in NewAPIHandler so production behavior is unchanged; tests in this
 	// package can override individual fields to avoid requiring a live DB
 	// or Soroban RPC.
 	getInvoiceByIDFn      func(context.Context, string) (*db.DbInvoice, error)
+	getInvoicesPageFn     func(context.Context, string, string, string, *int64, int, int, *db.InvoiceCursor) ([]*db.DbInvoice, int, bool, error)
 	getPoolStatsFn        func(context.Context) (*db.DbPoolStats, error)
 	getPoolSnapshotsFn    func(context.Context, int) ([]*db.DbPoolSnapshotHistory, error)
 	getRecentEventsFn     func(context.Context, int) ([]*db.EventLog, error)
-	getRecentEventsPageFn func(context.Context, int, int64, int) ([]*db.EventLog, error)
 	getProtocolStatsFn    func(context.Context) (*db.ProtocolStats, error)
 	readContractFn        func(ctx context.Context, rpcURL string, contractID string, method string, args []xdr.ScVal, serverKP *keypair.Full) (xdr.ScVal, error)
+	getRecentEventsPageFn func(context.Context, int, int64, int) ([]*db.EventLog, error)
 }
 
 func NewAPIHandler(cfg *config.Config) (*APIHandler, error) {
@@ -52,20 +55,23 @@ func NewAPIHandler(cfg *config.Config) (*APIHandler, error) {
 		return nil, fmt.Errorf("invalid server seed: %w", err)
 	}
 	return &APIHandler{
-		cfg:             cfg,
-		serverKP:        kp,
-		listenerHealth:  NewListenerHealth(),
-		usedChallenges:  make(map[string]time.Time),
-		dbHealthChecker: defaultDBHealthChecker,
+		cfg:                  cfg,
+		serverKP:             kp,
+		listenerHealth:       NewListenerHealth(),
+		usedChallenges:       make(map[string]time.Time),
+		dbHealthChecker:      defaultDBHealthChecker,
+		sorobanHealthChecker: defaultSorobanHealthChecker(cfg.SorobanRPCURL),
+		callSorobanRPCFn:     soroban.CallSorobanRPC,
 		getInvoiceByIDFn: func(ctx context.Context, id string) (*db.DbInvoice, error) {
 			return db.GetInvoiceByID(ctx, db.Pool, id)
 		},
+		getInvoicesPageFn:     db.GetFilteredInvoicesPage,
 		getPoolStatsFn:        db.GetPoolStats,
 		getPoolSnapshotsFn:    db.GetPoolSnapshotHistory,
 		getRecentEventsFn:     db.GetRecentEvents,
-		getRecentEventsPageFn: db.GetRecentEventsPage,
 		getProtocolStatsFn:    db.GetProtocolStats,
 		readContractFn:        soroban.ReadContract,
+		getRecentEventsPageFn: db.GetRecentEventsPage,
 	}, nil
 }
 

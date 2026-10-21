@@ -25,7 +25,9 @@ export function RegistrationModal({
   isRegistering,
   registerError,
 }: RegistrationModalProps) {
-  const modalRef = useFocusTrap<HTMLDivElement>(isOpen, onClose);
+  const modalRef = useFocusTrap<HTMLDivElement>(isOpen, onClose, {
+    inertBackground: true,
+  });
 
   const [regRole, setRegRole] = useState<"issuer" | "buyer">("issuer");
   const [companyName, setCompanyName] = useState("");

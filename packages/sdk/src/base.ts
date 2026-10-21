@@ -191,6 +191,25 @@ export class TransactionSendError extends Error {
 }
 
 /**
+ * A transport failure occurred while submitting a signed transaction. The
+ * network may have accepted it, so callers should check transaction history
+ * before asking the user to submit again.
+ */
+export class TransactionSubmissionUnknownError extends Error {
+  readonly method: string;
+  readonly cause?: string;
+
+  constructor(method: string, cause?: string) {
+    super(
+      `Could not confirm submission of ${method}. Check transaction history before retrying to avoid a duplicate.`,
+    );
+    this.name = "TransactionSubmissionUnknownError";
+    this.method = method;
+    if (cause) this.cause = cause;
+  }
+}
+
+/**
  * Thrown when a submitted transaction is confirmed on-chain as FAILED.
  */
 export class TransactionFailedError extends Error {
@@ -409,11 +428,22 @@ export class BaseContractClient {
       networkPassphrase: config.networkPassphrase,
       accountToSign: publicKey,
     });
-    const result = await withRetry(() =>
-      server.sendTransaction(
+    let result: Awaited<ReturnType<typeof server.sendTransaction>>;
+    try {
+      // Do not automatically retry a signed write after a transport failure:
+      // the server may have accepted it even if the response was lost.
+      result = await server.sendTransaction(
         TransactionBuilder.fromXDR(signed, config.networkPassphrase),
-      ),
-    );
+      );
+    } catch (error) {
+      if (isNetworkError(error)) {
+        throw new TransactionSubmissionUnknownError(
+          method,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
     if (result.status === "ERROR")
       throw new TransactionSendError(
         method,

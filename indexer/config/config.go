@@ -19,6 +19,15 @@ import (
 // cannot stall event indexing indefinitely. 20 ledgers is ~100s.
 const maxConfirmationDepth = 20
 
+// Webhook signature rotation defaults. The overlap is how long the previous
+// signing secret remains valid after a rotation; 24h gives subscribers a full
+// deploy cycle. The cap prevents a typo (for example a duration in
+// milliseconds interpreted as seconds) from keeping an old key alive forever.
+const (
+	defaultWebhookSecretOverlap = 24 * time.Hour
+	maxWebhookSecretOverlap     = 30 * 24 * time.Hour
+)
+
 type Config struct {
 	StellarNetwork           string
 	HorizonURL               string
@@ -43,6 +52,7 @@ type Config struct {
 	InvoiceRateLimit         int
 	InvoiceRateLimitWindow   time.Duration
 	WebhookConcurrency       int
+	WebhookSecretOverlap     time.Duration
 	ServerSeed               string
 	ServerSeedGenerated      bool
 	SentryDSN                string
@@ -208,6 +218,26 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
+	// How long the previous signing secret stays valid after a rotation. Values
+	// that are not positive durations fall back to the default; values above
+	// the cap are clamped so a compromised key cannot be kept valid
+	// indefinitely by a configuration typo.
+	webhookSecretOverlap := defaultWebhookSecretOverlap
+	if overlapStr := strings.TrimSpace(os.Getenv("WEBHOOK_SECRET_OVERLAP")); overlapStr != "" {
+		switch val, err := time.ParseDuration(overlapStr); {
+		case err != nil:
+			slog.Warn("WEBHOOK_SECRET_OVERLAP is not a duration; using default", "default", defaultWebhookSecretOverlap)
+		case val <= 0:
+			slog.Warn("WEBHOOK_SECRET_OVERLAP must be positive; using default", "default", defaultWebhookSecretOverlap)
+		case val > maxWebhookSecretOverlap:
+			slog.Warn("WEBHOOK_SECRET_OVERLAP exceeds the maximum; clamping",
+				"requested", val, "max", maxWebhookSecretOverlap)
+			webhookSecretOverlap = maxWebhookSecretOverlap
+		default:
+			webhookSecretOverlap = val
+		}
+	}
+
 	cfg := &Config{
 		StellarNetwork:           getRequired("STELLAR_NETWORK"),
 		HorizonURL:               getRequired("HORIZON_URL"),
@@ -232,6 +262,7 @@ func LoadConfig() (*Config, error) {
 		InvoiceRateLimit:         invoiceRateLimit,
 		InvoiceRateLimitWindow:   invoiceRateLimitWindow,
 		WebhookConcurrency:       webhookConcurrency,
+		WebhookSecretOverlap:     webhookSecretOverlap,
 		ServerSeed:               serverSeed,
 		ServerSeedGenerated:      serverSeedGenerated,
 		SentryDSN:                strings.TrimSpace(os.Getenv("SENTRY_DSN")),

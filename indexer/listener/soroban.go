@@ -18,6 +18,7 @@ import (
 type SorobanEvent struct {
 	ID             string   `json:"id"`
 	ContractID     string   `json:"contractId"`
+	TxHash         string   `json:"txHash,omitempty"`
 	Ledger         int32    `json:"ledger"`
 	LedgerClosedAt string   `json:"ledgerClosedAt"`
 	Topic          []string `json:"topic"`
@@ -31,6 +32,7 @@ type rpcEvent struct {
 	LedgerClosedAt string   `json:"ledgerClosedAt"`
 	ContractID     string   `json:"contractId"`
 	ID             string   `json:"id"`
+	TxHash         string   `json:"txHash"`
 	PagingToken    string   `json:"pagingToken"`
 	Topic          []string `json:"topic"`
 	Value          struct {
@@ -481,6 +483,7 @@ func (l *EventListener) pollEvents(ctx context.Context, startLedger int32) (int3
 			sorobanEv := SorobanEvent{
 				ID:             ev.ID,
 				ContractID:     ev.ContractID,
+				TxHash:         ev.TxHash,
 				Ledger:         ev.Ledger,
 				LedgerClosedAt: ev.LedgerClosedAt,
 				Topic:          ev.Topic,

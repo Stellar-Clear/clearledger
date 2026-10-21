@@ -17,6 +17,7 @@ Thank you for your interest in contributing to ClearLedger! To maintain code qua
 Before opening or requesting review of a pull request, confirm the following:
 
 - [ ] Code compiles without errors (`pnpm build` / `go build -v .`)
+- [ ] Generated SDK artifacts are current (`pnpm check:sdk-artifacts`)
 - [ ] TypeScript type-checking passes with no errors (`pnpm typecheck`)
 - [ ] Linting passes (`pnpm --filter web lint` / `go vet ./...` and `golangci-lint run`)
 - [ ] Translation catalogs are complete (`pnpm check:translations`)
@@ -32,7 +33,7 @@ Before opening or requesting review of a pull request, confirm the following:
 
 ## Test command coverage
 
-`pnpm build` covers `@clearledger/sdk`, `@clearledger/sdk-react`, `@clearledger/cli`, and `web`. `pnpm test` runs the Vitest suites for those four packages; it does not run Go tests. `pnpm lint` covers SDK and web, while `pnpm typecheck` builds SDK, SDK React, and CLI before checking TypeScript across the workspaces.
+`pnpm build` covers `@clearledger/sdk`, `@clearledger/sdk-react`, `@clearledger/cli`, and `web`. `pnpm check:sdk-artifacts` verifies that each SDK package's `main`, `types`, `bin`, and `exports` targets exist and are newer than their TypeScript inputs; it exits non-zero with the package to rebuild when they are missing or stale. `pnpm test:scripts` runs the tests for the workspace check itself. `pnpm test` runs the Vitest suites for the four packages; it does not run Go tests. `pnpm lint` covers SDK and web, while `pnpm typecheck` builds SDK, SDK React, and CLI before checking TypeScript across the workspaces.
 
 Vitest reports `Test Files` and `Tests` (the counts vary by package and checkout). For example:
 
@@ -104,6 +105,9 @@ Verify compilation across all monorepo packages before submitting code:
 pnpm install
 pnpm build
 
+# Verify generated entrypoints exist and match the current sources
+pnpm check:sdk-artifacts
+
 # Compile Go Indexer
 cd indexer
 go build -v .
@@ -143,6 +147,9 @@ The test suite is split across two runtimes. Both must pass before opening a PR.
 ```bash
 # Run all TypeScript workspace tests
 pnpm test
+
+# Run the workspace script tests
+pnpm test:scripts
 
 # Run frontend tests only
 pnpm --filter web test

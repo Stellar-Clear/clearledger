@@ -4,6 +4,7 @@ import {
   SimulationError,
   MissingReturnValueError,
   TransactionSendError,
+  TransactionSubmissionUnknownError,
   TransactionFailedError,
   TransactionTimeoutError,
 } from "./base.js";
@@ -172,6 +173,26 @@ describe("BaseContractClient", () => {
       expect(mockServer.simulateTransaction).toHaveBeenCalledTimes(1);
       expect(mockServer.prepareTransaction).toHaveBeenCalledTimes(1);
       expect(freighter.signTransaction).toHaveBeenCalledTimes(1);
+      expect(mockServer.sendTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not retry a signed write after an ambiguous network failure", async () => {
+      mockServer.simulateTransaction.mockResolvedValue({
+        result: { retval: xdr.ScVal.scvVoid() },
+        transactionData: { getReadOnly: () => [], getReadWrite: () => [] },
+        minResourceFee: "0",
+      });
+      mockServer.sendTransaction.mockRejectedValue(
+        new TypeError("Failed to fetch"),
+      );
+
+      await expect(
+        client.testWriteContract(
+          "test_method",
+          [],
+          "GACR43ILX6H4PGAOO5QKSZLU4ZJMGT3E66EAUDPLM5J6YTP4Y3PSHWGB",
+        ),
+      ).rejects.toBeInstanceOf(TransactionSubmissionUnknownError);
       expect(mockServer.sendTransaction).toHaveBeenCalledTimes(1);
     });
 

@@ -113,8 +113,10 @@ export default function ProfilePage() {
   const [showRegModal, setShowRegModal] = useState(false);
 
   // Modal Refs
-  const modalRef = useFocusTrap<HTMLDivElement>(showRegModal, () =>
-    setShowRegModal(false),
+  const modalRef = useFocusTrap<HTMLDivElement>(
+    showRegModal,
+    () => setShowRegModal(false),
+    { inertBackground: true },
   );
 
   const [regRole, setRegRole] = useState<"issuer" | "buyer">("issuer");

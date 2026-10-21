@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"clearledger/indexer/db"
+	"clearledger/indexer/soroban"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ListenerHealth tracks whether the background listener is still alive.
@@ -72,4 +73,13 @@ func defaultDBHealthChecker(ctx context.Context) error {
 		return fmt.Errorf("database pool not initialized")
 	}
 	return db.Pool.Ping(ctx)
+}
+
+func defaultSorobanHealthChecker(rpcURL string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		var result struct {
+			LatestLedger int64 `json:"latestLedger"`
+		}
+		return soroban.CallSorobanRPC(ctx, rpcURL, "getLatestLedger", map[string]interface{}{}, &result)
+	}
 }

@@ -69,6 +69,37 @@ paths:
                     status: degraded
                     error: listener or database unavailable
 
+  /live:
+    get:
+      tags: [Health]
+      summary: Check whether the API process is alive
+      security: []
+      responses:
+        "200":
+          description: Process is alive; dependencies are not checked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /ready:
+    get:
+      tags: [Health]
+      summary: Check API dependency readiness
+      security: []
+      responses:
+        "200":
+          description: Dependencies are ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: One or more dependencies are unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
   /diagnostics:
     get:
       tags: [Diagnostics]
@@ -119,6 +150,8 @@ paths:
                     network_passphrase: Test SDF Network ; September 2015
         "400":
           $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
     post:
       tags: [Auth]
       summary: Exchange signed SEP-10 challenge for JWT
@@ -198,6 +231,18 @@ paths:
           required: false
           schema:
             type: string
+        - name: buyer
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: due_date
+          in: query
+          required: false
+          description: Exact invoice due date as a Unix timestamp in seconds.
+          schema:
+            type: integer
+            format: int64
         - $ref: "#/components/parameters/Limit"
         - name: page
           in: query
@@ -206,6 +251,12 @@ paths:
             type: integer
             default: 1
             minimum: 1
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque cursor returned as next_cursor. Cannot be combined with page.
+          schema:
+            type: string
       responses:
         "200":
           description: Invoice list
@@ -213,8 +264,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PaginatedInvoices"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
     post:
       tags: [Invoices]
       summary: Create invoice
@@ -230,7 +285,7 @@ paths:
             examples:
               invoice:
                 value:
-                  buyer: GBUYERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+                  buyer: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
                   face_value: "10000000000"
                   due_date: 1790000000
       responses:
@@ -240,12 +295,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateInvoiceResponse"
+        "202":
+          description: Invoice submitted; confirmation is still pending. Poll the returned status URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateInvoicePendingResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/RequestEntityTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
 
   /invoices/{id}:
     get:
@@ -268,6 +337,34 @@ paths:
                 $ref: "#/components/schemas/Invoice"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /transactions/{hash}:
+    get:
+      tags: [Invoices]
+      summary: Get submitted transaction status
+      security: []
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-fA-F0-9]{64}$"
+      responses:
+        "200":
+          description: Current confirmation status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionStatus"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
 
   /stats:
     get:
@@ -298,6 +395,8 @@ paths:
                 $ref: "#/components/schemas/PoolStats"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /pool/position/{address}:
     get:
@@ -318,8 +417,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LPPosition"
-        "404":
-          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /metrics:
     get:
@@ -359,6 +462,10 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/PoolSnapshot"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /webhooks:
     post:
@@ -390,6 +497,54 @@ paths:
       responses:
         '200':
           description: List of webhooks
+  /webhooks/{id}/rotate:
+    post:
+      tags: [Webhooks]
+      summary: Rotate webhook signing secret
+      description: >-
+        Promotes a server-generated secret to the active signing key and keeps
+        the old key valid for the overlap window. The response contains the new
+        secret once. Only the authenticated owner of the subscription may
+        rotate it. A rotation is rejected with 409 while a previous key is
+        still inside its overlap window.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overlap_seconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 2592000
+                  description: >-
+                    Overlap window for the previous key. Defaults to
+                    WEBHOOK_SECRET_OVERLAP (24h) and is capped at 30 days.
+      responses:
+        '200':
+          description: New active secret and overlap expiry returned once
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookSubscription"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '404':
+          $ref: "#/components/responses/NotFound"
+        '409':
+          description: A previous signing secret is still within its overlap window
   /webhooks/{id}:
     delete:
       tags: [Webhooks]
@@ -401,7 +556,8 @@ paths:
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
       responses:
         '204':
           description: Webhook deleted
@@ -429,6 +585,14 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    UnprocessableEntity:
+      description: >-
+        A field is well-formed but carries the wrong Stellar StrKey version,
+        such as a contract (C...) address where an account (G...) is required.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     Unauthorized:
       description: Unauthorized
       content:
@@ -437,6 +601,24 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     NotFound:
       description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    RequestEntityTooLarge:
+      description: Request body exceeds the endpoint's size limit
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    GatewayTimeout:
+      description: The submitted transaction was not confirmed before the polling budget expired
       content:
         application/json:
           schema:
@@ -472,6 +654,27 @@ components:
           description: Request correlation ID, when generated by the server.
       required: [error]
 
+    WebhookSubscription:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_address:
+          type: string
+        url:
+          type: string
+        secret:
+          type: string
+          description: Present on create and rotate responses only.
+        event_types:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
     HealthResponse:
       type: object
       properties:
@@ -501,20 +704,7 @@ components:
         error_class:
           type: string
           description: Stable failure classification; omitted when healthy.
-          enum:
-            - not_configured
-            - timeout
-            - network_error
-            - invalid_configuration
-            - unauthorized
-            - forbidden
-            - not_found
-            - rate_limited
-            - upstream_error
-            - http_error
-            - invalid_response
-            - rpc_error
-            - unhealthy
+          enum: [not_configured, timeout, network_error, invalid_configuration, unauthorized, forbidden, not_found, rate_limited, upstream_error, http_error, invalid_response, rpc_error, unhealthy]
       required: [name, configured, healthy, latency_ms]
 
     DiagnosticsResponse:
@@ -531,6 +721,27 @@ components:
           items:
             $ref: "#/components/schemas/DiagnosticFeature"
       required: [status, checked_at, features]
+
+    ReadinessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ready, degraded]
+        dependencies:
+          type: object
+          properties:
+            postgres:
+              type: string
+              enum: [ready, unavailable]
+            soroban_rpc:
+              type: string
+              enum: [ready, unavailable]
+            listener:
+              type: string
+              enum: [ready, unavailable]
+          required: [postgres, soroban_rpc, listener]
+      required: [status, dependencies]
 
     AuthChallengeResponse:
       type: object
@@ -562,7 +773,13 @@ components:
       properties:
         buyer:
           type: string
-          description: Stellar account address (G...) of the buyer.
+          description: >-
+            Stellar account address (G...) of the buyer. Must be a valid
+            StrKey-encoded account; a malformed address (including a bad
+            checksum) returns 400 and a wrong-version StrKey such as a contract
+            (C...) address returns 422. The authenticated issuer must likewise
+            be an account (G...) StrKey.
+          example: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
         face_value:
           type: string
           description: >-
@@ -590,6 +807,32 @@ components:
           type: string
           description: Transaction status (e.g. SUCCESS).
       required: [invoice_id, transaction_hash, status]
+
+    CreateInvoicePendingResponse:
+      type: object
+      properties:
+        invoice_id:
+          type: string
+        transaction_hash:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+        status:
+          type: string
+          enum: [PENDING]
+        status_url:
+          type: string
+      required: [invoice_id, transaction_hash, status, status_url]
+
+    TransactionStatus:
+      type: object
+      properties:
+        transaction_hash:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+        status:
+          type: string
+          enum: [PENDING, SUCCESS, FAILED]
+      required: [transaction_hash, status]
 
     Invoice:
       type: object
@@ -667,6 +910,9 @@ components:
           type: integer
         totalPages:
           type: integer
+        next_cursor:
+          type: string
+          description: Opaque cursor for the next page, or an empty string when there are no more results.
       required: [data, total, page, limit, totalPages]
 
     EventLog:

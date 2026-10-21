@@ -15,8 +15,9 @@ import { useWalletStore } from "@/store/wallet";
 import { useProfile } from "@/hooks/useProfile";
 import { Invoice } from "@/types";
 import { formatAmount } from "@/lib/assets";
+import { downloadInvoicesCSV } from "@/lib/invoiceCsv";
 import { getRecentEvents } from "@/lib/api";
-import { ShieldAlert, RotateCcw, Save, Trash2, Menu } from "lucide-react";
+import { ShieldAlert, RotateCcw, Save, Trash2, Menu, Download } from "lucide-react";
 
 const MARKETPLACE_FILTERS_KEY = "clearledger:marketplace:filters";
 const MARKETPLACE_PRESETS_KEY = "clearledger:marketplace:presets";
@@ -590,17 +591,28 @@ export default function Marketplace() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* Marketplace List (Left) */}
           <div className="lg:col-span-8 space-y-4">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center gap-3">
               <h2 className="text-sm font-bold font-mono tracking-wider uppercase text-white">
                 {t("invoices.title", {
                   count: filteredAndSortedInvoices.length,
                 })}
               </h2>
-              {isLoading && (
-                <span className="text-xs text-primary animate-pulse font-mono uppercase">
-                  {t("syncing")}
-                </span>
-              )}
+              <div className="flex items-center gap-3">
+                {isLoading && (
+                  <span className="text-xs text-primary animate-pulse font-mono uppercase">
+                    {t("syncing")}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => downloadInvoicesCSV(filteredAndSortedInvoices)}
+                  disabled={filteredAndSortedInvoices.length === 0}
+                  className="inline-flex items-center gap-2 rounded border border-border px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-slate-300 hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                  Export CSV
+                </button>
+              </div>
             </div>
 
             {/* Invoices Table */}

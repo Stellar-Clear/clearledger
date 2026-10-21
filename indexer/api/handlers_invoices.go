@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -37,10 +39,32 @@ func (h *APIHandler) HandleGetInvoiceByID(w http.ResponseWriter, r *http.Request
 func (h *APIHandler) HandleGetInvoices(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	issuer := r.URL.Query().Get("issuer")
+	buyer := r.URL.Query().Get("buyer")
+	var dueDate *int64
+	if dueDateString := r.URL.Query().Get("due_date"); dueDateString != "" {
+		value, err := strconv.ParseInt(dueDateString, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid due_date parameter: must be a Unix timestamp", http.StatusBadRequest)
+			return
+		}
+		dueDate = &value
+	}
 
 	// Parse pagination params
 	page := 1
 	limit := 20
+	var cursor *db.InvoiceCursor
+	if cursorToken := r.URL.Query().Get("cursor"); cursorToken != "" {
+		decoded, err := base64.RawURLEncoding.DecodeString(cursorToken)
+		if err != nil || len(cursorToken) > 256 || json.Unmarshal(decoded, &cursor) != nil || cursor == nil || cursor.ID == "" || len(cursor.ID) > 64 {
+			http.Error(w, "invalid cursor", http.StatusBadRequest)
+			return
+		}
+		if r.URL.Query().Get("page") != "" {
+			http.Error(w, "cursor cannot be combined with page", http.StatusBadRequest)
+			return
+		}
+	}
 
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		if v, err := strconv.Atoi(pageStr); err == nil && v >= 1 {
@@ -65,8 +89,12 @@ func (h *APIHandler) HandleGetInvoices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (page - 1) * limit
+	if page > 1 && offset/limit != page-1 {
+		http.Error(w, "page parameter is too large", http.StatusBadRequest)
+		return
+	}
 
-	invoices, total, err := db.GetInvoicesPage(r.Context(), status, issuer, limit, offset)
+	invoices, total, hasMore, err := h.getInvoicesPageFn(r.Context(), status, issuer, buyer, dueDate, limit, offset, cursor)
 	if err != nil {
 		// The raw DB error can disclose table/column names; log it and return
 		// a generic message (issue #921).
@@ -84,12 +112,24 @@ func (h *APIHandler) HandleGetInvoices(w http.ResponseWriter, r *http.Request) {
 		totalPages = 1
 	}
 
+	nextCursor := ""
+	if hasMore && len(invoices) > 0 {
+		last := invoices[len(invoices)-1]
+		encoded, err := json.Marshal(db.InvoiceCursor{CreatedAt: last.CreatedAt, ID: last.ID})
+		if err != nil {
+			internalError(w, r, "failed to encode invoice cursor", err)
+			return
+		}
+		nextCursor = base64.RawURLEncoding.EncodeToString(encoded)
+	}
+
 	resp := map[string]interface{}{
-		"data":       invoices,
-		"total":      total,
-		"page":       page,
-		"limit":      limit,
-		"totalPages": totalPages,
+		"data":        invoices,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"totalPages":  totalPages,
+		"next_cursor": nextCursor,
 	}
 
 	writeJSON(w, http.StatusOK, resp)

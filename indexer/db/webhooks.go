@@ -16,14 +16,84 @@ import (
 )
 
 // WebhookSubscription represents a webhook subscription in the database.
+//
+// SigningSecret is the active key. When PreviousSigningSecret is set, it is the
+// key that was active before the most recent rotation and remains acceptable
+// only until PreviousSigningSecretExpiresAt.
 type WebhookSubscription struct {
-	ID            uuid.UUID `json:"id"`
-	TargetURL     string    `json:"target_url"`
-	EventTypes    []string  `json:"event_types"`
-	SigningSecret string    `json:"signing_secret"`
-	Active        bool      `json:"active"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID                             uuid.UUID  `json:"id"`
+	TargetURL                      string     `json:"target_url"`
+	EventTypes                     []string   `json:"event_types"`
+	SigningSecret                  string     `json:"signing_secret"`
+	PreviousSigningSecret          string     `json:"previous_signing_secret,omitempty"`
+	PreviousSigningSecretExpiresAt *time.Time `json:"previous_signing_secret_expires_at,omitempty"`
+	Active                         bool       `json:"active"`
+	CreatedAt                      time.Time  `json:"created_at"`
+	UpdatedAt                      time.Time  `json:"updated_at"`
+}
+
+// VerificationSecrets returns the signing keys a receiver should accept for
+// this subscription at now: the active key and, while the overlap window is
+// open, the previous key.
+func (s *WebhookSubscription) VerificationSecrets(now time.Time) []string {
+	secrets := make([]string, 0, 2)
+	if s.SigningSecret != "" {
+		secrets = append(secrets, s.SigningSecret)
+	}
+	if s.PreviousSigningSecret != "" && s.PreviousSigningSecretExpiresAt != nil && now.Before(*s.PreviousSigningSecretExpiresAt) {
+		secrets = append(secrets, s.PreviousSigningSecret)
+	}
+	return secrets
+}
+
+// Errors returned by RotateWebhookSigningSecret. They are exported so the API
+// can map them to 404/409 without exposing database details to clients.
+var (
+	ErrWebhookSubscriptionNotFound = errors.New("db: webhook subscription not found")
+	ErrWebhookRotationInProgress   = errors.New("db: previous webhook signing secret is still within its overlap window")
+)
+
+// webhookSubscriptionColumns keeps every subscription read in sync with
+// scanWebhookSubscription.
+const webhookSubscriptionColumns = `
+			id, target_url, event_types, signing_secret,
+			previous_signing_secret, previous_signing_secret_expires_at,
+			active, created_at, updated_at`
+
+// rowScanner is the Scan surface shared by pgx.Row and pgx.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanWebhookSubscription reads webhookSubscriptionColumns into a subscription.
+func scanWebhookSubscription(row rowScanner) (*WebhookSubscription, error) {
+	var sub WebhookSubscription
+	var eventTypesArray pgtype.Array[pgtype.Text]
+	var previousSecret *string
+	var previousExpiresAt *time.Time
+
+	if err := row.Scan(
+		&sub.ID, &sub.TargetURL, &eventTypesArray, &sub.SigningSecret,
+		&previousSecret, &previousExpiresAt,
+		&sub.Active, &sub.CreatedAt, &sub.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	if previousSecret != nil {
+		sub.PreviousSigningSecret = *previousSecret
+	}
+	sub.PreviousSigningSecretExpiresAt = previousExpiresAt
+	sub.EventTypes = textArrayToSlice(eventTypesArray)
+	return &sub, nil
+}
+
+// nullableSecret turns the empty Go representation of an unset previous secret
+// into SQL NULL so the database check constraint sees a complete pair.
+func nullableSecret(secret string) any {
+	if secret == "" {
+		return nil
+	}
+	return secret
 }
 
 // DefaultClaimLockTTL is how long ClaimPendingDeliveries holds a row for a
@@ -95,35 +165,49 @@ type WebhookDelivery struct {
 	UpdatedAt      time.Time       `json:"updated_at"`
 	EndpointURL    string          `json:"endpoint_url"`    // denormalized for worker convenience
 	EndpointSecret string          `json:"endpoint_secret"` // denormalized for worker convenience
+	// EndpointPreviousSecret is the key being retired by a rotation; it is
+	// used to attach a second signature until EndpointPreviousSecretExpiresAt.
+	EndpointPreviousSecret          string     `json:"endpoint_previous_secret,omitempty"`
+	EndpointPreviousSecretExpiresAt *time.Time `json:"endpoint_previous_secret_expires_at,omitempty"`
 }
 
 // deliveryColumns is the webhook_deliveries half of the claiming query's
-// RETURNING list. Keep it in sync with scanWebhookDeliveries; the final two
-// scanned columns (endpoint url/secret) come from the CTE, not from this list.
+// RETURNING list. Keep it in sync with scanWebhookDeliveries; the final four
+// scanned columns (endpoint url and the active/previous signing keys) come
+// from the CTE, not from this list.
 const deliveryColumns = `
 			wd.id, wd.subscription_id, wd.event_type, wd.event_id, wd.payload,
 			wd.attempt_count, wd.attempts, wd.max_attempts, wd.next_attempt_at, wd.locked_until,
 			wd.last_status, wd.last_response, wd.last_error, wd.terminal_status, wd.status,
 			wd.created_at, wd.updated_at`
 
+// eventTypesArray converts a string slice to the pgx array form used by the
+// event_types column.
+func eventTypesArray(eventTypes []string) pgtype.Array[pgtype.Text] {
+	arr := pgtype.Array[pgtype.Text]{
+		Elements: make([]pgtype.Text, len(eventTypes)),
+		Dims:     []pgtype.ArrayDimension{{Length: int32(len(eventTypes)), LowerBound: 1}},
+	}
+	for i, et := range eventTypes {
+		arr.Elements[i] = pgtype.Text{String: et, Valid: true}
+	}
+	return arr
+}
+
 // CreateWebhookSubscription inserts a new webhook subscription.
 func CreateWebhookSubscription(ctx context.Context, sub *WebhookSubscription) error {
 	query := `
-		INSERT INTO webhook_subscriptions (target_url, event_types, signing_secret, active)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO webhook_subscriptions (
+			target_url, event_types, signing_secret, active,
+			previous_signing_secret, previous_signing_secret_expires_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at
 	`
-	eventTypesArray := pgtype.Array[pgtype.Text]{
-		Elements: make([]pgtype.Text, len(sub.EventTypes)),
-		Dims:     []pgtype.ArrayDimension{{Length: int32(len(sub.EventTypes)), LowerBound: 1}},
-	}
-	for i, et := range sub.EventTypes {
-		eventTypesArray.Elements[i] = pgtype.Text{String: et, Valid: true}
-	}
-
-	err := Pool.QueryRow(ctx, query, sub.TargetURL, eventTypesArray, sub.SigningSecret, sub.Active).Scan(
-		&sub.ID, &sub.CreatedAt, &sub.UpdatedAt,
-	)
+	err := Pool.QueryRow(ctx, query,
+		sub.TargetURL, eventTypesArray(sub.EventTypes), sub.SigningSecret, sub.Active,
+		nullableSecret(sub.PreviousSigningSecret), sub.PreviousSigningSecretExpiresAt,
+	).Scan(&sub.ID, &sub.CreatedAt, &sub.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("db: create webhook subscription: %w", err)
 	}
@@ -132,32 +216,22 @@ func CreateWebhookSubscription(ctx context.Context, sub *WebhookSubscription) er
 
 // GetWebhookSubscriptionByID retrieves a webhook subscription by ID.
 func GetWebhookSubscriptionByID(ctx context.Context, id uuid.UUID) (*WebhookSubscription, error) {
-	query := `
-		SELECT id, target_url, event_types, signing_secret, active, created_at, updated_at
-		FROM webhook_subscriptions WHERE id = $1
-	`
-	var sub WebhookSubscription
-	var eventTypesArray pgtype.Array[pgtype.Text]
-	err := Pool.QueryRow(ctx, query, id).Scan(
-		&sub.ID, &sub.TargetURL, &eventTypesArray, &sub.SigningSecret, &sub.Active, &sub.CreatedAt, &sub.UpdatedAt,
-	)
+	query := `SELECT ` + webhookSubscriptionColumns + ` FROM webhook_subscriptions WHERE id = $1`
+	sub, err := scanWebhookSubscription(Pool.QueryRow(ctx, query, id))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("db: get webhook subscription: %w", err)
 	}
-	sub.EventTypes = textArrayToSlice(eventTypesArray)
-	return &sub, nil
+	return sub, nil
 }
 
 // ListActiveWebhookSubscriptionsForEvent retrieves all active subscriptions for a given event type.
 func ListActiveWebhookSubscriptionsForEvent(ctx context.Context, eventType string) ([]*WebhookSubscription, error) {
-	query := `
-		SELECT id, target_url, event_types, signing_secret, active, created_at, updated_at
+	query := `SELECT ` + webhookSubscriptionColumns + `
 		FROM webhook_subscriptions
-		WHERE active = TRUE AND $1 = ANY(event_types)
-	`
+		WHERE active = TRUE AND $1 = ANY(event_types)`
 	rows, err := Pool.Query(ctx, query, eventType)
 	if err != nil {
 		return nil, fmt.Errorf("db: list webhook subscriptions: %w", err)
@@ -166,15 +240,11 @@ func ListActiveWebhookSubscriptionsForEvent(ctx context.Context, eventType strin
 
 	var subs []*WebhookSubscription
 	for rows.Next() {
-		var sub WebhookSubscription
-		var eventTypesArray pgtype.Array[pgtype.Text]
-		if err := rows.Scan(
-			&sub.ID, &sub.TargetURL, &eventTypesArray, &sub.SigningSecret, &sub.Active, &sub.CreatedAt, &sub.UpdatedAt,
-		); err != nil {
+		sub, err := scanWebhookSubscription(rows)
+		if err != nil {
 			return nil, fmt.Errorf("db: scan webhook subscription: %w", err)
 		}
-		sub.EventTypes = textArrayToSlice(eventTypesArray)
-		subs = append(subs, &sub)
+		subs = append(subs, sub)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("db: iterate webhook subscriptions: %w", err)
@@ -184,11 +254,9 @@ func ListActiveWebhookSubscriptionsForEvent(ctx context.Context, eventType strin
 
 // ListAllWebhookSubscriptions retrieves all webhook subscriptions (for admin/management).
 func ListAllWebhookSubscriptions(ctx context.Context) ([]*WebhookSubscription, error) {
-	query := `
-		SELECT id, target_url, event_types, signing_secret, active, created_at, updated_at
+	query := `SELECT ` + webhookSubscriptionColumns + `
 		FROM webhook_subscriptions
-		ORDER BY created_at DESC
-	`
+		ORDER BY created_at DESC`
 	rows, err := Pool.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("db: list all webhook subscriptions: %w", err)
@@ -197,15 +265,11 @@ func ListAllWebhookSubscriptions(ctx context.Context) ([]*WebhookSubscription, e
 
 	var subs []*WebhookSubscription
 	for rows.Next() {
-		var sub WebhookSubscription
-		var eventTypesArray pgtype.Array[pgtype.Text]
-		if err := rows.Scan(
-			&sub.ID, &sub.TargetURL, &eventTypesArray, &sub.SigningSecret, &sub.Active, &sub.CreatedAt, &sub.UpdatedAt,
-		); err != nil {
+		sub, err := scanWebhookSubscription(rows)
+		if err != nil {
 			return nil, fmt.Errorf("db: scan webhook subscription: %w", err)
 		}
-		sub.EventTypes = textArrayToSlice(eventTypesArray)
-		subs = append(subs, &sub)
+		subs = append(subs, sub)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("db: iterate all webhook subscriptions: %w", err)
@@ -217,19 +281,16 @@ func ListAllWebhookSubscriptions(ctx context.Context) ([]*WebhookSubscription, e
 func UpdateWebhookSubscription(ctx context.Context, sub *WebhookSubscription) error {
 	query := `
 		UPDATE webhook_subscriptions
-		SET target_url = $1, event_types = $2, signing_secret = $3, active = $4, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $5
+		SET target_url = $1, event_types = $2, signing_secret = $3, active = $4,
+		    previous_signing_secret = $5, previous_signing_secret_expires_at = $6,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $7
 		RETURNING updated_at
 	`
-	eventTypesArray := pgtype.Array[pgtype.Text]{
-		Elements: make([]pgtype.Text, len(sub.EventTypes)),
-		Dims:     []pgtype.ArrayDimension{{Length: int32(len(sub.EventTypes)), LowerBound: 1}},
-	}
-	for i, et := range sub.EventTypes {
-		eventTypesArray.Elements[i] = pgtype.Text{String: et, Valid: true}
-	}
-
-	err := Pool.QueryRow(ctx, query, sub.TargetURL, eventTypesArray, sub.SigningSecret, sub.Active, sub.ID).Scan(&sub.UpdatedAt)
+	err := Pool.QueryRow(ctx, query,
+		sub.TargetURL, eventTypesArray(sub.EventTypes), sub.SigningSecret, sub.Active,
+		nullableSecret(sub.PreviousSigningSecret), sub.PreviousSigningSecretExpiresAt, sub.ID,
+	).Scan(&sub.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("db: update webhook subscription: not found")
@@ -237,6 +298,83 @@ func UpdateWebhookSubscription(ctx context.Context, sub *WebhookSubscription) er
 		return fmt.Errorf("db: update webhook subscription: %w", err)
 	}
 	return nil
+}
+
+// RotateWebhookSigningSecret promotes newSecret to the active key and keeps the
+// old active key as the previous key until now+overlap. This is the write half
+// of overlapping rotation: the delivery worker can attach the previous key's
+// signature during the window, and receivers can accept either key until it
+// expires.
+//
+// When ownerAddress is non-empty the update is scoped to that subscriber, which
+// is the API's trust boundary. An empty ownerAddress is the operator/admin path
+// (documented in docs/webhooks.md) and assumes database-level access.
+//
+// A second rotation is rejected with ErrWebhookRotationInProgress while the
+// existing previous key is still valid. Rotating again would discard a key the
+// subscriber may still be relying on. A missing subscription or an owner
+// mismatch returns ErrWebhookSubscriptionNotFound, so the API does not reveal
+// whether someone else's subscription exists.
+func RotateWebhookSigningSecret(ctx context.Context, id uuid.UUID, ownerAddress, newSecret string, overlap time.Duration) (*WebhookSubscription, error) {
+	if strings.TrimSpace(newSecret) == "" {
+		return nil, fmt.Errorf("db: rotate webhook signing secret: new secret must not be empty")
+	}
+	if overlap <= 0 {
+		return nil, fmt.Errorf("db: rotate webhook signing secret: overlap must be positive")
+	}
+	if Pool == nil {
+		return nil, fmt.Errorf("db: rotate webhook signing secret: database pool not initialized")
+	}
+
+	tx, err := Pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("db: rotate webhook signing secret: begin: %w", err)
+	}
+	defer rollbackOnError(ctx, tx)
+
+	query := `SELECT ` + webhookSubscriptionColumns + ` FROM webhook_subscriptions WHERE id = $1`
+	args := []any{id}
+	if ownerAddress != "" {
+		query += ` AND user_address = $2`
+		args = append(args, ownerAddress)
+	}
+	query += ` FOR UPDATE`
+
+	current, err := scanWebhookSubscription(tx.QueryRow(ctx, query, args...))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrWebhookSubscriptionNotFound
+		}
+		return nil, fmt.Errorf("db: rotate webhook signing secret: lock subscription: %w", err)
+	}
+
+	now := time.Now()
+	if current.PreviousSigningSecretExpiresAt != nil && now.Before(*current.PreviousSigningSecretExpiresAt) {
+		return nil, ErrWebhookRotationInProgress
+	}
+	if newSecret == current.SigningSecret {
+		return nil, fmt.Errorf("db: rotate webhook signing secret: new secret must differ from the active secret")
+	}
+	expiresAt := now.Add(overlap)
+
+	update := `
+		UPDATE webhook_subscriptions
+		SET previous_signing_secret = signing_secret,
+		    previous_signing_secret_expires_at = $1,
+		    signing_secret = $2,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $3
+		RETURNING ` + webhookSubscriptionColumns + `
+	`
+	rotated, err := scanWebhookSubscription(tx.QueryRow(ctx, update, expiresAt, newSecret, id))
+	if err != nil {
+		return nil, fmt.Errorf("db: rotate webhook signing secret: update: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("db: rotate webhook signing secret: commit: %w", err)
+	}
+	return rotated, nil
 }
 
 // DeleteWebhookSubscription deletes a webhook subscription.
@@ -308,7 +446,8 @@ func ClaimPendingDeliveries(ctx context.Context, limit int, lockFor time.Duratio
 
 	query := `
 		WITH claimable AS (
-			SELECT wd.id, ws.target_url, ws.signing_secret
+			SELECT wd.id, ws.target_url, ws.signing_secret,
+			       ws.previous_signing_secret, ws.previous_signing_secret_expires_at
 			FROM webhook_deliveries wd
 			JOIN webhook_subscriptions ws ON ws.id = wd.subscription_id
 			WHERE wd.status = 'pending'
@@ -324,7 +463,8 @@ func ClaimPendingDeliveries(ctx context.Context, limit int, lockFor time.Duratio
 		    updated_at = CURRENT_TIMESTAMP
 		FROM claimable c
 		WHERE wd.id = c.id
-		RETURNING ` + deliveryColumns + `, c.target_url, c.signing_secret
+		RETURNING ` + deliveryColumns + `, c.target_url, c.signing_secret,
+		          c.previous_signing_secret, c.previous_signing_secret_expires_at
 	`
 
 	rows, err := Pool.Query(ctx, query, limit, lockFor.Seconds())
@@ -346,6 +486,7 @@ func scanWebhookDeliveries(rows pgx.Rows) ([]*WebhookDelivery, error) {
 			&d.AttemptCount, &d.Attempts, &d.MaxAttempts, &d.NextAttemptAt, &d.LockedUntil,
 			&d.LastStatus, &d.LastResponse, &d.LastError, &d.TerminalStatus, &d.Status,
 			&d.CreatedAt, &d.UpdatedAt, &d.EndpointURL, &d.EndpointSecret,
+			&d.EndpointPreviousSecret, &d.EndpointPreviousSecretExpiresAt,
 		); err != nil {
 			return nil, fmt.Errorf("db: scan webhook delivery: %w", err)
 		}

@@ -425,6 +425,39 @@ describe("InvoiceDetailClient", () => {
     expect(mockRefetch).toHaveBeenCalled();
   });
 
+  it("restores focus to the action trigger after closing the transaction dialog", async () => {
+    vi.mocked(useWalletStore).mockImplementation(((selector: any) => {
+      const state = {
+        address: ISSUER,
+        connected: true,
+        network: "testnet",
+        token: null,
+        role: "issuer",
+      };
+      return selector ? selector(state) : state;
+    }) as any);
+
+    render(<InvoiceDetailClient invoiceId={INVOICE_ID} />);
+
+    const trigger = screen.getByRole("button", {
+      name: /MARK GOODS SHIPPED/i,
+    });
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    await waitFor(() =>
+      expect(screen.getByText("ship-tx-hash")).toBeInTheDocument(),
+    );
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+
+    fireEvent.click(screen.getByRole("button", { name: /close dialog/i }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
   it("announces a failed transaction assertively and allows a retry", async () => {
     mockShipInvoice.mockRejectedValueOnce(new Error("Ship failed"));
     vi.mocked(useWalletStore).mockImplementation(((selector: any) => {
@@ -448,13 +481,10 @@ describe("InvoiceDetailClient", () => {
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("Ship failed"),
     );
-    // The pending dialog closes on failure, so its hidden live regions leave
-    // with it; the route-level alert is the single failure announcement.
     expect(
       screen.queryByTestId("transaction-status-assertive"),
     ).not.toBeInTheDocument();
 
-    // Retrying starts a fresh lifecycle and must announce pending again.
     fireEvent.click(shipButton);
     expect(screen.getByTestId("transaction-status-polite")).toHaveTextContent(
       /Transaction pending/i,
