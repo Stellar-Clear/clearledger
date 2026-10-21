@@ -4,7 +4,9 @@
  * Stellar on-chain amounts are u128 integers denominated in stroops.
  * All SDK financial methods accept and return `bigint` in stroops.
  */
-const STROOPS_PER_USDC = 10_000_000;
+export const STROOPS_PER_USDC = 10_000_000;
+/** Maximum magnitude representable by Soroban's u128 amount fields. */
+export const MAX_STROOPS = (1n << 128n) - 1n;
 
 /**
  * Converts a stroop-denominated bigint to a human-readable USDC string
@@ -21,6 +23,12 @@ const STROOPS_PER_USDC = 10_000_000;
  * ```
  */
 export function toUsdc(stroops: bigint): string {
+  if (typeof stroops !== "bigint") {
+    throw new TypeError("Stroop amounts must be bigint values");
+  }
+  if (stroops > MAX_STROOPS || stroops < -MAX_STROOPS) {
+    throw new RangeError("Stroop amount exceeds the u128 range");
+  }
   const whole = stroops / BigInt(STROOPS_PER_USDC);
   const fraction = stroops % BigInt(STROOPS_PER_USDC);
 
@@ -66,5 +74,8 @@ export function fromUsdc(usdc: string): bigint {
   const paddedFrac = fracPart.padEnd(7, "0").slice(0, 7);
 
   const stroops = BigInt(intPart + paddedFrac);
+  if (stroops > MAX_STROOPS) {
+    throw new RangeError("USDC amount exceeds the u128 range");
+  }
   return negative ? -stroops : stroops;
 }

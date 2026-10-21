@@ -171,7 +171,11 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 	if len(corsOrigins) == 0 {
-		corsOrigins = []string{"http://localhost:3000"}
+		if appEnv == "production" {
+			missing = append(missing, "ALLOWED_ORIGINS")
+		} else {
+			corsOrigins = []string{"http://localhost:3000"}
+		}
 	}
 
 	trustedProxyCIDRs := strings.TrimSpace(os.Getenv("TRUSTED_PROXY_CIDRS"))

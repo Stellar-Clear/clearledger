@@ -12,6 +12,7 @@ import { useProfile } from "@/hooks/useProfile";
 import { DatePicker } from "@/components/ui/date-picker";
 import { getErrorMessage } from "@/lib/errors";
 import { SupportDiagnostics } from "@/components/shared/SupportDiagnostics";
+import { fromUsdc, toUsdc } from "@clearledger/sdk";
 
 const invoiceContractID = process.env.NEXT_PUBLIC_INVOICE_CONTRACT_ID || "";
 
@@ -75,6 +76,23 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
     () => parsedValue - discountPaid,
     [parsedValue, discountPaid],
   );
+  const preview = useMemo(() => {
+    if (!faceValue || !dueDate || parsedValue <= 0) return null;
+    try {
+      const faceValueStroops = fromUsdc(faceValue.replace(/,/g, ""));
+      const discountStroops = (faceValueStroops * BigInt(discountBps)) / 10_000n;
+      const due = new Date(`${dueDate}T00:00:00.000Z`).getTime();
+      const days = Math.max(1, Math.ceil((due - Date.now()) / 86_400_000));
+      return {
+        discount: toUsdc(discountStroops),
+        proceeds: toUsdc(faceValueStroops - discountStroops),
+        annualizedBps: Math.round((discountBps * 365) / days),
+        days,
+      };
+    } catch {
+      return null;
+    }
+  }, [discountBps, dueDate, faceValue, parsedValue]);
 
   const handleNextStep = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -356,6 +374,18 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
                 {(discountBps / 100).toFixed(2)}% ({discountBps} bps)
               </span>
             </div>
+            {preview && (
+              <div className="rounded border border-primary/20 bg-primary/5 px-3 py-2 text-[10px] font-mono text-slate-300">
+                <div className="flex justify-between">
+                  <span>Indicative proceeds</span>
+                  <span className="font-bold text-emerald-400">{preview.proceeds} {asset}</span>
+                </div>
+                <div className="mt-1 flex justify-between text-slate-500">
+                  <span>Annualized discount ({preview.days} days)</span>
+                  <span>{(preview.annualizedBps / 100).toFixed(2)}% ({preview.annualizedBps} bps)</span>
+                </div>
+              </div>
+            )}
             <input
               type="range"
               min="50"
@@ -423,7 +453,7 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
                 <div className="flex justify-between text-rose-400">
                   <span>Discount ({(discountBps / 100).toFixed(2)}%):</span>
                   <span>
-                    -{discountPaid.toLocaleString()} {asset}
+                    -{preview?.discount ?? discountPaid.toLocaleString()} {asset}
                   </span>
                 </div>
                 <div className="border-t border-border/40 my-2 pt-2 flex justify-between text-emerald-400 font-bold">

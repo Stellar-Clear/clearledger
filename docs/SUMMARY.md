@@ -45,6 +45,7 @@
 - [Mainnet Setup](developer-guide/mainnet-setup.md)
 - [Production Readiness Gates](PRODUCTION_READINESS.md)
 - [SDK Reference](developer-guide/sdk-reference.md)
+- [Wallet-signed Soroban writes](developer-guide/sdk-write-lifecycle.md)
 - [Indexer API Reference](developer-guide/indexer-api-reference.md)
 - [Contract Event Versioning](developer-guide/event-versioning.md)
 - [Indexer Operations: Recovery, Backfill, and Webhook Replay](developer-guide/indexer-operations.md)
@@ -57,3 +58,5 @@
 
 - [How to Contribute](contributing/how-to-contribute.md)
 - [Accessibility Statement](ACCESSIBILITY.md)
+
+- [Local full-stack startup](local-full-stack.md)

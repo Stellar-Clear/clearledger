@@ -117,6 +117,9 @@ function extractMessage(err: unknown): string {
 
 const KNOWN_ERRORS: Record<string, string> = {
   "Wallet not connected": "Please connect your wallet to perform this action",
+  "tx_bad_auth": "Authorization failed. Reconnect your wallet and sign the transaction again.",
+  "insufficient_resource": "The transaction exceeded its resource budget. Refresh the simulation and try again.",
+  "no_such_contract": "This contract is not available on the selected network. Switch to Testnet and retry.",
 };
 
 /**

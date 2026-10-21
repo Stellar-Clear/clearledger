@@ -46,7 +46,13 @@ export function InvoiceStatusTimeline({ invoice }: InvoiceStatusTimelineProps) {
   const shouldReduceMotion = useReducedMotion();
 
   return (
-    <ol className="relative space-y-0">
+    <section aria-label="Invoice activity summary">
+      <div className="mb-3 flex justify-end print:hidden">
+        <button type="button" onClick={() => window.print()} className="rounded border border-slate-600 px-3 py-1 text-[10px] font-semibold uppercase text-slate-300 hover:border-teal-400 hover:text-teal-300">
+          Print activity summary
+        </button>
+      </div>
+      <ol className="relative space-y-0">
       {entries.map((entry, index) => {
         const { isComplete, isCurrent, label, timestampLabel, txHash } = entry;
         const isFuture = !isComplete;
@@ -137,6 +143,7 @@ export function InvoiceStatusTimeline({ invoice }: InvoiceStatusTimelineProps) {
           </li>
         );
       })}
-    </ol>
+      </ol>
+    </section>
   );
 }

@@ -587,6 +587,10 @@ export default function Marketplace() {
           </div>
         </div>
 
+        <p className="mb-4 rounded border border-slate-700 bg-slate-900/40 p-3 text-xs text-slate-400">
+          Issuers must complete profile verification before listing. Buyers can fund listed invoices after connecting a wallet; status changes appear after Testnet events are indexed.
+        </p>
+
         {/* Marketplace Contents */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* Marketplace List (Left) */}

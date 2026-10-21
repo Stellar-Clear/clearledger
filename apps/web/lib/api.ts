@@ -390,7 +390,7 @@ export async function getInvoices(filters?: {
   issuer?: string;
   page?: number;
   limit?: number;
-}): Promise<PaginatedInvoices> {
+}, signal?: AbortSignal): Promise<PaginatedInvoices> {
   const params = new URLSearchParams();
   if (filters?.status) params.append("status", filters.status);
   if (filters?.issuer) params.append("issuer", filters.issuer);
@@ -404,7 +404,7 @@ export async function getInvoices(filters?: {
     page: number;
     limit: number;
     totalPages: number;
-  }>(`/invoices${query}`);
+  }> (`/invoices${query}`, signal ? { signal } : undefined);
 
   return {
     data: raw.data.map(parseInvoiceResponse),

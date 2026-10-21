@@ -283,7 +283,7 @@ export default function SMEDashboard() {
 
             {/* CTA to profile registration page */}
             <Link
-              href="/profile"
+              href="/profile?returnTo=%2Fdashboard%3FopenCreate%3D1"
               className="w-full mt-2 bg-primary hover:bg-primary-hover text-black font-bold uppercase tracking-wider text-xs rounded px-4 py-2.5 flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(0,212,170,0.1)] transition-all"
             >
               <span>{t("checklist.cta")}</span>

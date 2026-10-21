@@ -37,7 +37,7 @@ export function useInvoicesList(filters?: {
 }) {
   const invoicesQuery = useQuery<PaginatedInvoices>({
     queryKey: ["invoices", filters],
-    queryFn: () => getInvoices(filters),
+    queryFn: ({ signal }) => getInvoices(filters, signal),
     refetchInterval: 15000,
     staleTime: 15000,
   });

@@ -11,4 +11,5 @@ export * from "./clients/escrow.js";
 export * from "./clients/token.js";
 export * from "./clients/agentRegistry.js";
 export * from "./types/schemas.js";
+export * from "./events.js";
 export type { SimulationResult } from "./base.js";

@@ -8,7 +8,7 @@ import {
   scValToNative,
 } from "@stellar/stellar-sdk";
 import * as freighterApi from "@stellar/freighter-api";
-import { getConfig, getSorobanServer } from "./config.js";
+import { getConfig, getSorobanServer, validateSDKConfiguration } from "./config.js";
 
 const signTransactionFn =
   (
@@ -241,9 +241,44 @@ function isNetworkError(err: unknown): boolean {
   );
 }
 
-interface RetryOptions {
+export interface ContractCallOptions {
+  /** Cancels RPC retries and transaction confirmation polling. */
+  signal?: AbortSignal;
+}
+
+interface RetryOptions extends ContractCallOptions {
   maxAttempts?: number;
   baseDelayMs?: number;
+}
+
+export class OperationAbortedError extends Error {
+  constructor() {
+    super("The contract operation was aborted");
+    this.name = "AbortError";
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new OperationAbortedError();
+}
+
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new OperationAbortedError());
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
 }
 
 async function withRetry<T>(
@@ -255,14 +290,13 @@ async function withRetry<T>(
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    throwIfAborted(options.signal);
     try {
       return await fn();
     } catch (err) {
       lastError = err;
       if (!isNetworkError(err) || attempt === maxAttempts) throw err;
-      await new Promise((resolve) =>
-        setTimeout(resolve, baseDelayMs * Math.pow(2, attempt - 1)),
-      );
+      await wait(baseDelayMs * Math.pow(2, attempt - 1), options.signal);
     }
   }
 
@@ -283,6 +317,8 @@ export interface SimulationResult {
   footprintSize: number;
 }
 
+export type PreflightResult = SimulationResult;
+
 /** Result of a submitted transaction, including structured failure details. */
 export type TransactionSubmissionResult =
   | {
@@ -295,6 +331,14 @@ export type TransactionSubmissionResult =
       status: "ERROR";
       error: { name: string; message: string; method: string };
     };
+
+export type TransactionLifecycleState =
+  | "submitted"
+  | "pending"
+  | "success"
+  | "failed"
+  | "unknown"
+  | "timeout";
 
 export class BaseContractClient {
   protected contractId: string;
@@ -322,10 +366,11 @@ export class BaseContractClient {
     args: xdr.ScVal[],
     publicKey: string,
     parse: (val: xdr.ScVal) => T,
+    options: ContractCallOptions = {},
   ): Promise<T> {
     const config = getConfig();
     const server = this.getRpcServer();
-    const account = await withRetry(() => server.getAccount(publicKey));
+    const account = await withRetry(() => server.getAccount(publicKey), options);
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase: config.networkPassphrase,
@@ -333,7 +378,7 @@ export class BaseContractClient {
       .addOperation(this.contract.call(method, ...args))
       .setTimeout(30)
       .build();
-    const sim = await withRetry(() => server.simulateTransaction(tx));
+    const sim = await withRetry(() => server.simulateTransaction(tx), options);
     if (rpc.Api.isSimulationError(sim)) {
       throw new SimulationError(method, sim.error);
     }
@@ -347,8 +392,9 @@ export class BaseContractClient {
     method: string,
     args: xdr.ScVal[],
     publicKey: string,
+    options: ContractCallOptions = {},
   ): Promise<string> {
-    const result = await this.writeContractDetailed(method, args, publicKey);
+    const result = await this.writeContractDetailed(method, args, publicKey, options);
     return result.transactionHash;
   }
 
@@ -357,9 +403,10 @@ export class BaseContractClient {
     method: string,
     args: xdr.ScVal[],
     publicKey: string,
+    options: ContractCallOptions = {},
   ): Promise<TransactionSubmissionResult> {
     try {
-      return await this.writeContractDetailed(method, args, publicKey);
+      return await this.writeContractDetailed(method, args, publicKey, options);
     } catch (error) {
       return {
         transactionHash: null,
@@ -377,6 +424,7 @@ export class BaseContractClient {
     method: string,
     args: xdr.ScVal[],
     publicKey: string,
+    options: ContractCallOptions = {},
   ): Promise<Extract<TransactionSubmissionResult, { status: "SUCCESS" }>> {
     const writeKey = `${this.contractId}:${publicKey}:${method}`;
     if (activeWrites.has(writeKey)) {
@@ -385,7 +433,7 @@ export class BaseContractClient {
 
     activeWrites.add(writeKey);
     try {
-      return await this.performWriteContractDetailed(method, args, publicKey);
+      return await this.performWriteContractDetailed(method, args, publicKey, options);
     } finally {
       // Release after success, rejection, RPC failure, or timeout so a retry
       // is possible once this submission has reached a terminal state.
@@ -397,10 +445,12 @@ export class BaseContractClient {
     method: string,
     args: xdr.ScVal[],
     publicKey: string,
+    options: ContractCallOptions = {},
   ): Promise<Extract<TransactionSubmissionResult, { status: "SUCCESS" }>> {
     const config = getConfig();
+    validateSDKConfiguration(config);
     const server = this.getRpcServer();
-    const account = await withRetry(() => server.getAccount(publicKey));
+    const account = await withRetry(() => server.getAccount(publicKey), options);
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase: config.networkPassphrase,
@@ -408,7 +458,7 @@ export class BaseContractClient {
       .addOperation(this.contract.call(method, ...args))
       .setTimeout(30)
       .build();
-    const sim = await withRetry(() => server.simulateTransaction(tx));
+    const sim = await withRetry(() => server.simulateTransaction(tx), options);
     if (rpc.Api.isSimulationError(sim))
       throw new SimulationError(method, sim.error);
     const retval = sim.result?.retval;
@@ -420,7 +470,7 @@ export class BaseContractClient {
         returnValue = retval;
       }
     }
-    const prepared = await withRetry(() => server.prepareTransaction(tx));
+    const prepared = await withRetry(() => server.prepareTransaction(tx), options);
     // Re-check at the signing boundary: Freighter can change networks after
     // initial connection or while simulation is running.
     await assertWalletNetwork(config.networkPassphrase);
@@ -451,22 +501,20 @@ export class BaseContractClient {
         method,
         result.errorResult?.toXDR().toString("base64"),
       );
-    let response = await withRetry(() => server.getTransaction(result.hash));
+    let response = await withRetry(() => server.getTransaction(result.hash), options);
     let attempts = 1;
     while (
       response.status === rpc.Api.GetTransactionStatus.NOT_FOUND &&
       attempts < MAX_TRANSACTION_POLL_ATTEMPTS
     ) {
-      await new Promise((resolve) =>
-        setTimeout(
-          resolve,
-          Math.min(
-            TRANSACTION_POLL_MAX_DELAY_MS,
-            TRANSACTION_POLL_BASE_DELAY_MS * 2 ** Math.min(attempts - 1, 2),
-          ),
+      await wait(
+        Math.min(
+          TRANSACTION_POLL_MAX_DELAY_MS,
+          TRANSACTION_POLL_BASE_DELAY_MS * 2 ** Math.min(attempts - 1, 2),
         ),
+        options.signal,
       );
-      response = await withRetry(() => server.getTransaction(result.hash));
+      response = await withRetry(() => server.getTransaction(result.hash), options);
       attempts++;
     }
     if (response.status === rpc.Api.GetTransactionStatus.NOT_FOUND)
@@ -484,10 +532,11 @@ export class BaseContractClient {
     method: string,
     args: xdr.ScVal[],
     publicKey: string,
+    options: ContractCallOptions = {},
   ): Promise<SimulationResult> {
     const config = getConfig();
     const server = this.getRpcServer();
-    const account = await withRetry(() => server.getAccount(publicKey));
+    const account = await withRetry(() => server.getAccount(publicKey), options);
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase: config.networkPassphrase,
@@ -495,7 +544,7 @@ export class BaseContractClient {
       .addOperation(this.contract.call(method, ...args))
       .setTimeout(30)
       .build();
-    const sim = await withRetry(() => server.simulateTransaction(tx));
+    const sim = await withRetry(() => server.simulateTransaction(tx), options);
     if (rpc.Api.isSimulationError(sim))
       throw new SimulationError(method, sim.error);
     const footprintSize = sim.transactionData
@@ -521,5 +570,14 @@ export class BaseContractClient {
       expectedResult,
       footprintSize,
     };
+  }
+
+  /** Runs the shared write preflight without opening a wallet prompt. */
+  public async preflightTransaction(
+    method: string,
+    args: xdr.ScVal[],
+    publicKey: string,
+  ): Promise<PreflightResult> {
+    return this.simulateTransaction(method, args, publicKey);
   }
 }

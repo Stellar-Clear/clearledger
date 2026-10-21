@@ -68,6 +68,25 @@ export interface SDKConfig {
   };
 }
 
+export class SDKConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SDKConfigurationError";
+  }
+}
+
+export function validateSDKConfiguration(config: SDKConfig = activeConfig): void {
+  if (!config.networkPassphrase || !config.sorobanRpcUrl) {
+    throw new SDKConfigurationError("Stellar network configuration is incomplete");
+  }
+  const missing = Object.entries(config.contractIds)
+    .filter(([, contractId]) => !contractId)
+    .map(([name]) => name);
+  if (missing.length > 0) {
+    throw new SDKConfigurationError(`Missing contract IDs: ${missing.join(", ")}`);
+  }
+}
+
 let activeConfig: SDKConfig = {
   horizonUrl: DEFAULT_NETWORK.horizonUrl,
   sorobanRpcUrl: DEFAULT_NETWORK.sorobanRpcUrl,
