@@ -48,7 +48,20 @@ Before opening a PR:
 - [ ] New tests written for new functionality
 - [ ] TypeScript compiles with no errors (`tsc --noEmit`)
 - [ ] No `console.log` left in production code
+- [ ] Internal Markdown links pass (`pnpm check:links`)
 - [ ] Commit messages follow the format above
+
+### Documentation links
+
+Documentation changes must keep relative links working. CI runs a checker over all tracked Markdown files that validates local file and directory targets, image paths, and heading anchors. External `http(s)` and `mailto` links are ignored.
+
+Run it locally before opening a PR:
+
+```bash
+pnpm check:links
+```
+
+Failures are printed as `source:line -> broken target`, and the command exits non-zero. To verify the checker itself, run `pnpm test:links`.
 
 ### Contact
 

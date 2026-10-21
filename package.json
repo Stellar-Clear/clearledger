@@ -7,7 +7,10 @@
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter @clearledger/sdk build && pnpm --filter @clearledger/sdk-react build && pnpm --filter @clearledger/cli build && pnpm --filter web build",
     "lint": "pnpm --filter @clearledger/sdk lint && pnpm --filter web lint",
+    "check:links": "node scripts/check-md-links.mjs",
+    "test:links": "node scripts/check-md-links.mjs --self-test",
     "test": "pnpm --filter @clearledger/sdk test && pnpm --filter @clearledger/sdk-react test && pnpm --filter @clearledger/cli test && pnpm --filter web test",
+    "check:translations": "pnpm --filter web check:translations",
     "typecheck": "pnpm --filter @clearledger/sdk build && pnpm --filter @clearledger/sdk-react build && pnpm --filter @clearledger/cli build && pnpm -r exec tsc --noEmit"
   },
   "devDependencies": {

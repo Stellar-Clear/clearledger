@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
+	indexermiddleware "clearledger/indexer/middleware"
 	"github.com/getsentry/sentry-go"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/golang-jwt/jwt/v5"
-	indexermiddleware "clearledger/indexer/middleware"
 )
 
 func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
@@ -23,19 +23,19 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				http.Error(w, "Unauthorized: missing token", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "missing token")
 				return
 			}
 
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				http.Error(w, "Unauthorized: invalid header format", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "invalid authorization header")
 				return
 			}
 
 			tokenStr := strings.TrimSpace(parts[1])
 			if tokenStr == "" || strings.ContainsAny(tokenStr, " \t\r\n") {
-				http.Error(w, "Unauthorized: invalid header format", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "invalid authorization header")
 				return
 			}
 
@@ -47,19 +47,19 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 			})
 
 			if err != nil || !token.Valid {
-				http.Error(w, "Unauthorized: invalid or expired token", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "invalid or expired token")
 				return
 			}
 
 			claims, ok := token.Claims.(jwt.MapClaims)
 			if !ok {
-				http.Error(w, "Unauthorized: invalid claims", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "invalid token claims")
 				return
 			}
 
 			sub, ok := claims["sub"].(string)
 			if !ok {
-				http.Error(w, "Unauthorized: missing sub claim", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "missing token subject")
 				return
 			}
 
@@ -84,9 +84,10 @@ func CORSMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 			if origin != "" {
 				if _, ok := originSet[origin]; ok {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Expose-Headers", "X-Next-Cursor")
 					w.Header().Set("Vary", "Origin")
 				} else {
-					w.WriteHeader(http.StatusForbidden)
+					writeAPIError(w, r, http.StatusForbidden, "origin is not allowed")
 					return
 				}
 			}
@@ -122,9 +123,7 @@ func RecoveryMiddleware() func(http.Handler) http.Handler {
 						"path", r.URL.Path,
 					)
 
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					_, _ = w.Write([]byte(`{"error": "internal server error"}`))
+					writeAPIError(w, r, http.StatusInternalServerError, "internal server error")
 				}
 			}()
 			next.ServeHTTP(w, r)
@@ -354,7 +353,7 @@ func RateLimitMiddleware(rl *perClientRateLimiter) func(http.Handler) http.Handl
 			clientKey := getClientKey(r)
 			if !rl.allow(clientKey) {
 				w.Header().Set("Retry-After", "1")
-				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+				writeAPIError(w, r, http.StatusTooManyRequests, "too many requests")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -435,6 +434,10 @@ func NewRouter(h *APIHandler) (*chi.Mux, func()) {
 		r.Use(RateLimitMiddleware(rl))
 		r.With(indexermiddleware.InvoiceRateLimitMiddleware(invoiceLimiter)).Post("/invoices", h.HandleCreateInvoice)
 
+		// API connection diagnostics. Protected because it exposes operational
+		// metadata, though the payload never contains URLs, tokens, or env values.
+		r.Get("/diagnostics", h.HandleGetDiagnostics)
+
 		// Webhooks
 		r.Post("/webhooks", h.HandleCreateWebhook)
 		r.Get("/webhooks", h.HandleGetWebhooks)
@@ -451,7 +454,7 @@ func metricsTokenMiddleware(expected string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Authorization") != "Bearer "+expected {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				writeAPIError(w, r, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, r)

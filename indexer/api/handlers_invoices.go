@@ -13,7 +13,7 @@ import (
 func (h *APIHandler) HandleGetInvoiceByID(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		http.Error(w, "missing invoice id", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "missing invoice id")
 		return
 	}
 
@@ -26,7 +26,7 @@ func (h *APIHandler) HandleGetInvoiceByID(w http.ResponseWriter, r *http.Request
 	}
 
 	if invoice == nil {
-		http.Error(w, "invoice not found", http.StatusNotFound)
+		writeAPIError(w, r, http.StatusNotFound, "invoice not found")
 		return
 	}
 
@@ -46,7 +46,7 @@ func (h *APIHandler) HandleGetInvoices(w http.ResponseWriter, r *http.Request) {
 		if v, err := strconv.Atoi(pageStr); err == nil && v >= 1 {
 			page = v
 		} else {
-			http.Error(w, "invalid page parameter: must be a positive integer", http.StatusBadRequest)
+			writeAPIError(w, r, http.StatusBadRequest, "invalid page parameter: must be a positive integer")
 			return
 		}
 	}
@@ -59,7 +59,7 @@ func (h *APIHandler) HandleGetInvoices(w http.ResponseWriter, r *http.Request) {
 				limit = v
 			}
 		} else {
-			http.Error(w, "invalid limit parameter: must be a positive integer", http.StatusBadRequest)
+			writeAPIError(w, r, http.StatusBadRequest, "invalid limit parameter: must be a positive integer")
 			return
 		}
 	}

@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -29,6 +32,48 @@ type WebhookSubscription struct {
 // expiring quickly enough that a killed worker does not strand the queue.
 const DefaultClaimLockTTL = 60 * time.Second
 
+// MaxDeliveryAttempts is the hard upper bound the delivery worker and the
+// Mark* helpers put on a row's max_attempts. Together with the worker's capped
+// exponential backoff it bounds how long a broken subscriber can keep a
+// delivery in the queue.
+const MaxDeliveryAttempts = 20
+
+// MaxDeliveryErrorLength caps the persisted last_error so a misbehaving
+// subscriber cannot bloat the table with a multi-megabyte diagnostic.
+const MaxDeliveryErrorLength = 1024
+
+var deliveryURLPattern = regexp.MustCompile(`(?i)https?://[^\s"'<>]+`)
+
+// SanitizeDeliveryError prepares a failure diagnostic for persistence in
+// webhook_deliveries.last_error. The delivery URL is the trust boundary here:
+// hosted endpoints commonly carry API keys in the path or query string, and an
+// endpoint's signing secret must never be written to a table that operators and
+// support tooling can read. Any redaction values (endpoint URL, signing secret)
+// are replaced, bare URLs are stripped, and the result is length-capped.
+func SanitizeDeliveryError(errMsg string, redactions ...string) string {
+	// Remove URLs first: replacing a known endpoint prefix before this step
+	// could leave its query string (and any token in it) behind.
+	s := deliveryURLPattern.ReplaceAllString(errMsg, "[redacted-url]")
+	for _, value := range redactions {
+		if value == "" {
+			continue
+		}
+		s = strings.ReplaceAll(s, value, "[redacted]")
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		s = "delivery failed"
+	}
+	if len(s) > MaxDeliveryErrorLength {
+		cut := MaxDeliveryErrorLength
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = strings.TrimSpace(s[:cut]) + "…"
+	}
+	return s
+}
+
 // WebhookDelivery represents a webhook delivery attempt in the database.
 type WebhookDelivery struct {
 	ID             int64           `json:"id"`
@@ -36,7 +81,8 @@ type WebhookDelivery struct {
 	EventType      string          `json:"event_type"`
 	EventID        string          `json:"event_id"`
 	Payload        json.RawMessage `json:"payload"`
-	Attempts       int             `json:"attempts"`
+	Attempts       int             `json:"attempts"` // legacy alias of AttemptCount
+	AttemptCount   int             `json:"attempt_count"`
 	MaxAttempts    int             `json:"max_attempts"`
 	NextAttemptAt  time.Time       `json:"next_attempt_at"`
 	LockedUntil    *time.Time      `json:"locked_until"`
@@ -44,6 +90,7 @@ type WebhookDelivery struct {
 	LastResponse   *string         `json:"last_response"`
 	LastError      *string         `json:"last_error"`
 	Status         string          `json:"status"`
+	TerminalStatus *string         `json:"terminal_status"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 	EndpointURL    string          `json:"endpoint_url"`    // denormalized for worker convenience
@@ -55,8 +102,8 @@ type WebhookDelivery struct {
 // scanned columns (endpoint url/secret) come from the CTE, not from this list.
 const deliveryColumns = `
 			wd.id, wd.subscription_id, wd.event_type, wd.event_id, wd.payload,
-			wd.attempts, wd.max_attempts, wd.next_attempt_at, wd.locked_until,
-			wd.last_status, wd.last_response, wd.last_error, wd.status,
+			wd.attempt_count, wd.attempts, wd.max_attempts, wd.next_attempt_at, wd.locked_until,
+			wd.last_status, wd.last_response, wd.last_error, wd.terminal_status, wd.status,
 			wd.created_at, wd.updated_at`
 
 // CreateWebhookSubscription inserts a new webhook subscription.
@@ -296,12 +343,19 @@ func scanWebhookDeliveries(rows pgx.Rows) ([]*WebhookDelivery, error) {
 		var d WebhookDelivery
 		if err := rows.Scan(
 			&d.ID, &d.SubscriptionID, &d.EventType, &d.EventID, &d.Payload,
-			&d.Attempts, &d.MaxAttempts, &d.NextAttemptAt, &d.LockedUntil,
-			&d.LastStatus, &d.LastResponse, &d.LastError, &d.Status,
+			&d.AttemptCount, &d.Attempts, &d.MaxAttempts, &d.NextAttemptAt, &d.LockedUntil,
+			&d.LastStatus, &d.LastResponse, &d.LastError, &d.TerminalStatus, &d.Status,
 			&d.CreatedAt, &d.UpdatedAt, &d.EndpointURL, &d.EndpointSecret,
 		); err != nil {
 			return nil, fmt.Errorf("db: scan webhook delivery: %w", err)
 		}
+		// The migration keeps the legacy and explicit counters equal, but
+		// normalizing here protects callers from a row written by an older
+		// worker that only knew `attempts`.
+		if d.AttemptCount < d.Attempts {
+			d.AttemptCount = d.Attempts
+		}
+		d.Attempts = d.AttemptCount
 		deliveries = append(deliveries, &d)
 	}
 	if err := rows.Err(); err != nil {
@@ -310,13 +364,23 @@ func scanWebhookDeliveries(rows pgx.Rows) ([]*WebhookDelivery, error) {
 	return deliveries, nil
 }
 
-// MarkDeliverySuccess marks a webhook delivery as successful and releases its claim.
+// MarkDeliverySuccess records a successful attempt and makes the row terminal.
+// The update is idempotent and only applies while the row is still pending, so
+// a duplicate or late success callback cannot increment the counter twice and
+// a delivered row is never returned to the retry queue.
 func MarkDeliverySuccess(ctx context.Context, deliveryID int64, statusCode int, response string) error {
 	query := `
 		UPDATE webhook_deliveries
-		SET status = 'delivered', last_status = $1, last_response = $2, last_error = NULL,
-		    attempts = attempts + 1, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $3
+		SET status = 'delivered',
+		    terminal_status = 'delivered',
+		    last_status = $1,
+		    last_response = $2,
+		    last_error = NULL,
+		    attempts = attempts + 1,
+		    attempt_count = attempt_count + 1,
+		    locked_until = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $3 AND status = 'pending'
 	`
 	_, err := Pool.Exec(ctx, query, statusCode, response, deliveryID)
 	if err != nil {
@@ -326,43 +390,88 @@ func MarkDeliverySuccess(ctx context.Context, deliveryID int64, statusCode int, 
 }
 
 // MarkDeliveryRetry marks a webhook delivery as failed and schedules a retry.
-// If attempts + 1 >= max_attempts, the delivery is marked as dead_letter instead.
-// The claim is always released, otherwise the scheduled backoff would silently
-// become "backoff or however long the lock happened to last".
+// If the next attempt reaches the bounded max_attempts, the row moves to the
+// terminal dead_letter state instead of scheduling another attempt.
+//
+// The update only applies to a pending row, releases the claim, and (when
+// expectedAttempts is non-negative) only applies while attempt_count still has
+// the value the worker claimed. That compare-and-set makes duplicate outcome
+// writes for the same attempt no-ops rather than extra attempt increments.
 func MarkDeliveryRetry(ctx context.Context, deliveryID int64, nextAttemptAt time.Time, statusCode *int, errorMsg string) error {
+	return MarkDeliveryRetryIfAttempt(ctx, deliveryID, -1, nextAttemptAt, statusCode, errorMsg)
+}
+
+// MarkDeliveryRetryIfAttempt is MarkDeliveryRetry with a compare-and-set on the
+// attempt counter. Pass -1 to skip the comparison (the legacy MarkDeliveryRetry
+// behavior). The failure diagnostic is sanitized before it is persisted.
+func MarkDeliveryRetryIfAttempt(ctx context.Context, deliveryID int64, expectedAttempts int, nextAttemptAt time.Time, statusCode *int, errorMsg string) error {
+	errorMsg = SanitizeDeliveryError(errorMsg)
 	query := `
 		UPDATE webhook_deliveries
 		SET status = CASE
-				WHEN attempts + 1 >= max_attempts THEN 'dead_letter'
+				WHEN attempt_count + 1 >= LEAST(GREATEST(max_attempts, 1), $5) THEN 'dead_letter'
 				ELSE 'pending'
+			END,
+			terminal_status = CASE
+				WHEN attempt_count + 1 >= LEAST(GREATEST(max_attempts, 1), $5) THEN 'dead_letter'
+				ELSE NULL
 			END,
 			last_status = $1,
 			last_error = $2,
 			next_attempt_at = CASE
-				WHEN attempts + 1 >= max_attempts THEN next_attempt_at
+				WHEN attempt_count + 1 >= LEAST(GREATEST(max_attempts, 1), $5) THEN next_attempt_at
 				ELSE $3
 			END,
-			attempts = attempts + 1,
+			attempts = attempt_count + 1,
+			attempt_count = attempt_count + 1,
 			locked_until = NULL,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = $4
+		  AND status = 'pending'
+		  AND ($6 < 0 OR attempt_count = $6)
 	`
-	_, err := Pool.Exec(ctx, query, statusCode, errorMsg, nextAttemptAt, deliveryID)
+	_, err := Pool.Exec(ctx, query, statusCode, errorMsg, nextAttemptAt, deliveryID, MaxDeliveryAttempts, expectedAttempts)
 	if err != nil {
 		return fmt.Errorf("db: mark delivery retry: %w", err)
 	}
 	return nil
 }
 
-// MarkDeliveryDeadLetter marks a webhook delivery as dead-lettered (exhausted
-// retries) and releases its claim.
+// MarkDeliveryDeadLetter marks a webhook delivery as terminally dead-lettered
+// (retries exhausted). It records the attempt that failed, sanitizes the
+// diagnostic and releases the claim. Like the other Mark* helpers it is
+// idempotent: a row that is already terminal is left untouched.
 func MarkDeliveryDeadLetter(ctx context.Context, deliveryID int64, errorMsg string) error {
+	return MarkDeliveryDeadLetterIfAttempt(ctx, deliveryID, -1, errorMsg)
+}
+
+// MarkDeliveryDeadLetterIfAttempt is MarkDeliveryDeadLetter with a
+// compare-and-set on the attempt counter so a duplicate outcome write cannot
+// increment attempt_count twice.
+func MarkDeliveryDeadLetterIfAttempt(ctx context.Context, deliveryID int64, expectedAttempts int, errorMsg string) error {
+	return MarkDeliveryDeadLetterWithStatusIfAttempt(ctx, deliveryID, expectedAttempts, nil, errorMsg)
+}
+
+// MarkDeliveryDeadLetterWithStatusIfAttempt records the terminal failed
+// attempt, including the HTTP status when the failure came from a response.
+// The CAS argument behaves like MarkDeliveryRetryIfAttempt.
+func MarkDeliveryDeadLetterWithStatusIfAttempt(ctx context.Context, deliveryID int64, expectedAttempts int, statusCode *int, errorMsg string) error {
+	errorMsg = SanitizeDeliveryError(errorMsg)
 	query := `
 		UPDATE webhook_deliveries
-		SET status = 'dead_letter', last_error = $1, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $2
+		SET status = 'dead_letter',
+		    terminal_status = 'dead_letter',
+		    last_status = COALESCE($1, last_status),
+		    last_error = $2,
+		    attempts = attempt_count + 1,
+		    attempt_count = attempt_count + 1,
+		    locked_until = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $3
+		  AND status = 'pending'
+		  AND ($4 < 0 OR attempt_count = $4)
 	`
-	_, err := Pool.Exec(ctx, query, errorMsg, deliveryID)
+	_, err := Pool.Exec(ctx, query, statusCode, errorMsg, deliveryID, expectedAttempts)
 	if err != nil {
 		return fmt.Errorf("db: mark delivery dead letter: %w", err)
 	}

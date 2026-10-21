@@ -8,10 +8,14 @@ contract addresses, not off-chain access control.
 
 | Contract          | Address                                                    |
 | ----------------- | ---------------------------------------------------------- |
-| registry_contract | `CABGWVIZFF62FG67ZGFEP67NEEY4WYTMFURDMFTKKNRDAFPKPOJDTN4C` |
-| invoice_contract  | `CA4O3MR7LWHRSUDBNU6FY6UDFFYBN7TGBZXBDZB4OYYXFYXIFJ6RJF6B` |
-| escrow_contract   | `CAJWGUKDTTC3SKN4RAAY72J4DVIIYSCFHX6GIMNTT22ABMISJK4GBCEH` |
-| pool_contract     | `CAKEWH7SJCXGV2MH2WZYIX3QDPTSSBQFXYVYBOWAGLNBBZMPLE2US6CS` |
+| registry_contract | `CCGHK4XJA23BVPTADPCOUV76G2KYAAAKQIKPF35FN5RFP2TT47TXWQNT` |
+| invoice_contract  | `CCZN4GM5O7D6RGI4P4FCKIB5HMRKDWOWY7M3YZ637XZFCGM7SXGIVAZ6` |
+| escrow_contract   | `CC3EDR7B64Y5KZEJETATNVUWYGPHGUAR2V2QYTUCDOZJMYY3XEVAIGQB` |
+| pool_contract     | `CDBJEGCV3IENZJKCK3LYYOSA7B5NZSPELBE7FPFHUKLG74LRJTCQIZ45` |
+
+These match the `NEXT_PUBLIC_*_CONTRACT_ID` values in the root `.env.example`
+and `apps/web/.env.example`. For a guided Testnet walkthrough using the pool
+contract, see the [Stellar Testnet quickstart](../QUICKSTART.md).
 
 ### Call graph
 

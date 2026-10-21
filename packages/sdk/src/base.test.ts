@@ -89,6 +89,9 @@ describe("BaseContractClient", () => {
       mockServer as unknown as rpc.Server,
     );
     vi.mocked(freighter.signTransaction).mockResolvedValue("signed-xdr");
+    vi.mocked(freighter.getNetworkDetails).mockResolvedValue({
+      network: "testnet",
+    } as any);
   });
 
   describe("readContract", () => {
@@ -170,6 +173,32 @@ describe("BaseContractClient", () => {
       expect(mockServer.prepareTransaction).toHaveBeenCalledTimes(1);
       expect(freighter.signTransaction).toHaveBeenCalledTimes(1);
       expect(mockServer.sendTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it("waits through an RPC NOT_FOUND window before reporting success", async () => {
+      mockServer.simulateTransaction.mockResolvedValue({
+        result: { retval: xdr.ScVal.scvVoid() },
+        transactionData: { getReadOnly: () => [], getReadWrite: () => [] },
+        minResourceFee: "0",
+      });
+      mockServer.sendTransaction.mockResolvedValue({
+        status: "PENDING",
+        hash: "mock-hash",
+      });
+      mockServer.getTransaction
+        .mockResolvedValueOnce({ status: rpc.Api.GetTransactionStatus.NOT_FOUND })
+        .mockResolvedValueOnce({ status: rpc.Api.GetTransactionStatus.SUCCESS });
+
+      vi.useFakeTimers();
+      const submission = client.testWriteContract(
+        "test_method",
+        [],
+        "GACR43ILX6H4PGAOO5QKSZLU4ZJMGT3E66EAUDPLM5J6YTP4Y3PSHWGB",
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(submission).resolves.toBe("mock-hash");
+      expect(mockServer.getTransaction).toHaveBeenCalledTimes(2);
+      vi.useRealTimers();
     });
 
     it("handles transaction timeout error", async () => {
@@ -304,6 +333,28 @@ describe("BaseContractClient", () => {
       // BASE_FEE (100) + minResourceFee (100) = 200 stroops => 0.00002 XLM
       expect(result.estimatedFeeXlm).toBe("0.0000200");
     });
+
+    it.each(["void method", "optional None result"])(
+      "returns no decoded value for a %s",
+      async () => {
+        mockServer.simulateTransaction.mockResolvedValue({
+          result: { retval: xdr.ScVal.scvVoid() },
+          transactionData: {
+            getReadOnly: () => [],
+            getReadWrite: () => [],
+          },
+          minResourceFee: "0",
+        });
+
+        const result = await client.simulateTransaction(
+          "test_method",
+          [],
+          "GACR43ILX6H4PGAOO5QKSZLU4ZJMGT3E66EAUDPLM5J6YTP4Y3PSHWGB",
+        );
+
+        expect(result.expectedResult).toBeUndefined();
+      },
+    );
 
     it("falls back to the raw ScVal when scValToNative cannot decode the result", async () => {
       vi.mocked(scValToNative).mockImplementationOnce(() => {
