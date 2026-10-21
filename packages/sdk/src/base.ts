@@ -294,6 +294,14 @@ export type TransactionSubmissionResult =
       error: { name: string; message: string; method: string };
     };
 
+export type TransactionLifecycleState =
+  | "submitted"
+  | "pending"
+  | "success"
+  | "failed"
+  | "unknown"
+  | "timeout";
+
 export class BaseContractClient {
   protected contractId: string;
   private contractInstance: Contract;
