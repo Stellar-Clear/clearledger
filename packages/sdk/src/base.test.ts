@@ -89,6 +89,9 @@ describe("BaseContractClient", () => {
       mockServer as unknown as rpc.Server,
     );
     vi.mocked(freighter.signTransaction).mockResolvedValue("signed-xdr");
+    vi.mocked(freighter.getNetworkDetails).mockResolvedValue({
+      network: "testnet",
+    } as any);
   });
 
   describe("readContract", () => {
