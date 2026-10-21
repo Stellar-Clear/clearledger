@@ -59,6 +59,26 @@ export function ConfirmationDialog() {
               {truncateAddress(pendingAction.invoiceId)}
             </span>
           </div>
+          {pendingAction.contractId && (
+            <div className="flex justify-between gap-3">
+              <span className="shrink-0 text-slate-500">Contract:</span>
+              <span className="truncate text-right text-slate-200" title={pendingAction.contractId}>
+                {truncateAddress(pendingAction.contractId)}
+              </span>
+            </div>
+          )}
+          {pendingAction.asset && (
+            <div className="flex justify-between">
+              <span className="text-slate-500">Asset:</span>
+              <span className="text-slate-200">{pendingAction.asset}</span>
+            </div>
+          )}
+          {pendingAction.amount && (
+            <div className="flex justify-between">
+              <span className="text-slate-500">Amount:</span>
+              <span className="text-slate-200">{pendingAction.amount}</span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-slate-500">Estimated Fee:</span>
             <span className="text-slate-200">Network fee applies</span>

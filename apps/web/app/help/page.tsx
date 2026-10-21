@@ -140,6 +140,18 @@ export default function HelpPage() {
           View participant guides
         </Link>
       </section>
+
+      <p className="mt-6 text-xs leading-5 text-muted-foreground">
+        Accessibility: read the{" "}
+        <a
+          href="https://github.com/Stellar-Clear/clearledger/blob/main/docs/ACCESSIBILITY.md"
+          className="text-primary hover:underline"
+        >
+          accessibility statement
+        </a>{" "}
+        for tested keyboard flows, known limitations and how to report a
+        problem.
+      </p>
       </main>
     </div>
   );

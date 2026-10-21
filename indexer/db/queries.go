@@ -529,6 +529,36 @@ func GetRecentEvents(ctx context.Context, limit int) ([]*EventLog, error) {
 	return events, nil
 }
 
+// GetRecentEventsPage returns events before the supplied stable tuple cursor.
+// The cursor uses the same ledger_closed_at/id ordering as the initial page.
+func GetRecentEventsPage(ctx context.Context, limit int, beforeTimestamp int64, beforeID int) ([]*EventLog, error) {
+	query := `
+		SELECT id, event_id, contract_id, ledger, ledger_closed_at, event_type, data
+		FROM events_log
+		WHERE (ledger_closed_at, id) < ($1, $2)
+		ORDER BY ledger_closed_at DESC, id DESC
+		LIMIT $3
+	`
+	rows, err := Pool.Query(ctx, query, beforeTimestamp, beforeID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("queries: get recent events page: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]*EventLog, 0, limit)
+	for rows.Next() {
+		var ev EventLog
+		if err := rows.Scan(&ev.ID, &ev.EventID, &ev.ContractID, &ev.Ledger, &ev.LedgerClosedAt, &ev.EventType, &ev.Data); err != nil {
+			return nil, fmt.Errorf("queries: scan event page: %w", err)
+		}
+		events = append(events, &ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("queries: iterate event page: %w", err)
+	}
+	return events, nil
+}
+
 func GetLatestProcessedLedger(ctx context.Context) (int32, error) {
 	query := `SELECT COALESCE(MAX(ledger), 0) FROM events_log`
 	var ledger int32

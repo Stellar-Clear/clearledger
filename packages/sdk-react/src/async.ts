@@ -24,25 +24,34 @@ export function useAsyncQuery<T>(
   const [data, setData] = useState<T | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const requestId = useRef(0);
 
   const queryFnRef = useRef(queryFn);
   queryFnRef.current = queryFn;
 
   const run = useCallback(async () => {
+    const currentRequest = ++requestId.current;
     setIsLoading(true);
     setError(null);
+    setData(null);
     try {
       const result = await queryFnRef.current();
-      setData(result);
+      if (currentRequest === requestId.current) setData(result);
     } catch (err) {
-      setError(err instanceof Error ? err : new Error(String(err)));
+      if (currentRequest === requestId.current) {
+        setError(err instanceof Error ? err : new Error(String(err)));
+      }
     } finally {
-      setIsLoading(false);
+      if (currentRequest === requestId.current) setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void run();
+    return () => {
+      // Ignore responses from the previous wallet, network, or contract.
+      requestId.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 

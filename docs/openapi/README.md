@@ -9,6 +9,7 @@ All responses include the server-generated `X-Request-Id` correlation header.
 | Method | Path                       | Auth | Description                       |
 | ------ | -------------------------- | ---- | --------------------------------- |
 | GET    | `/health`                  | None | Health check                      |
+| GET    | `/diagnostics`             | JWT  | API connection diagnostics        |
 | GET    | `/metrics`                 | None | Prometheus metrics                |
 | GET    | `/auth`                    | None | Create SEP-10 challenge           |
 | POST   | `/auth`                    | None | Exchange signed challenge for JWT |

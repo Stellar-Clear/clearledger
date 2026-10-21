@@ -395,7 +395,11 @@ export default function InvoiceDetailClient({
                   )}
                 </Button>
                 {pdfError && (
-                  <p className="text-xs font-mono text-red-400" role="alert">
+                  <p
+                    className="text-xs font-mono text-red-400"
+                    role="alert"
+                    aria-live="assertive"
+                  >
                     {pdfError}
                   </p>
                 )}
@@ -476,8 +480,12 @@ export default function InvoiceDetailClient({
                   </Button>
                 )}
                 {error && (
-                  <p className="text-xs font-mono text-red-400" role="alert">
-                    {error}
+                  <p
+                    className="text-xs font-mono text-red-400"
+                    role="alert"
+                    aria-live="assertive"
+                  >
+                    Transaction failed: {error}
                   </p>
                 )}
               </div>

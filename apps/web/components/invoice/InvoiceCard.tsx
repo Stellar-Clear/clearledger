@@ -25,6 +25,8 @@ import { truncateAddress } from "@/lib/format";
 import { MAX_DISCOUNT_BPS, validateDiscountBps } from "@/lib/validation";
 import { useConfirmDialogStore } from "@/store/confirmDialog";
 
+const invoiceContractId = process.env.NEXT_PUBLIC_INVOICE_CONTRACT_ID || "";
+
 interface InvoiceCardProps {
   invoice: Invoice;
   role?: "issuer" | "buyer" | "lp";
@@ -391,6 +393,9 @@ export const InvoiceCard = React.memo(function InvoiceCard({
                   requestConfirmation({
                     label: "Confirm Delivery",
                     invoiceId: invoice.id,
+                    contractId: invoiceContractId,
+                    asset: invoice.asset,
+                    amount: formatAmount(invoice.faceValue, invoice.asset),
                     fn: () =>
                       handleAction(
                         () => confirmDelivery({ invoiceId: invoice.id }),
@@ -417,6 +422,9 @@ export const InvoiceCard = React.memo(function InvoiceCard({
                 requestConfirmation({
                   label: "Repay Invoice",
                   invoiceId: invoice.id,
+                  contractId: invoiceContractId,
+                  asset: invoice.asset,
+                  amount: formatAmount(invoice.faceValue, invoice.asset),
                   fn: () =>
                     handleAction(
                       () => repayInvoice({ invoiceId: invoice.id }),
@@ -443,6 +451,9 @@ export const InvoiceCard = React.memo(function InvoiceCard({
                 requestConfirmation({
                   label: "Trigger Default",
                   invoiceId: invoice.id,
+                  contractId: invoiceContractId,
+                  asset: invoice.asset,
+                  amount: formatAmount(invoice.faceValue, invoice.asset),
                   fn: () =>
                     handleAction(
                       () => defaultInvoice({ invoiceId: invoice.id }),
