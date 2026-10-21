@@ -31,16 +31,18 @@ class TestClient extends BaseContractClient {
     args: xdr.ScVal[],
     publicKey: string,
     parse: (val: xdr.ScVal) => any,
+    options?: { signal?: AbortSignal },
   ) {
-    return this.readContract(method, args, publicKey, parse);
+    return this.readContract(method, args, publicKey, parse, options);
   }
 
   public testWriteContract(
     method: string,
     args: xdr.ScVal[],
     publicKey: string,
+    options?: { signal?: AbortSignal },
   ) {
-    return this.writeContract(method, args, publicKey);
+    return this.writeContract(method, args, publicKey, options);
   }
 }
 
@@ -96,6 +98,16 @@ describe("BaseContractClient", () => {
   });
 
   describe("readContract", () => {
+    it("aborts before making an RPC request", async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        client.testReadContract("test_method", [], "GACR43ILX6H4PGAOO5QKSZLU4ZJMGT3E66EAUDPLM5J6YTP4Y3PSHWGB", (val) => val.u32(), { signal: controller.signal }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(mockServer.getAccount).not.toHaveBeenCalled();
+    });
+
     it("successfully reads a contract", async () => {
       mockServer.simulateTransaction.mockResolvedValue({
         result: {
@@ -144,6 +156,24 @@ describe("BaseContractClient", () => {
   });
 
   describe("writeContract", () => {
+    it("cancels transaction confirmation polling without leaving a timer", async () => {
+      mockServer.simulateTransaction.mockResolvedValue({
+        result: { retval: xdr.ScVal.scvVoid() },
+        transactionData: { getReadOnly: () => [], getReadWrite: () => [] },
+        minResourceFee: "0",
+      });
+      mockServer.sendTransaction.mockResolvedValue({ status: "PENDING", hash: "mock-hash" });
+      mockServer.getTransaction.mockResolvedValue({ status: rpc.Api.GetTransactionStatus.NOT_FOUND });
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      const submission = client.testWriteContract("test_method", [], "GACR43ILX6H4PGAOO5QKSZLU4ZJMGT3E66EAUDPLM5J6YTP4Y3PSHWGB", { signal: controller.signal });
+      await Promise.resolve();
+      controller.abort();
+      await expect(submission).rejects.toMatchObject({ name: "AbortError" });
+      expect(vi.getTimerCount()).toBe(0);
+      vi.useRealTimers();
+    });
+
     it("successfully writes to a contract", async () => {
       mockServer.simulateTransaction.mockResolvedValue({
         result: { retval: xdr.ScVal.scvVoid() },
