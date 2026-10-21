@@ -22,11 +22,13 @@ function StatTile({
   value,
   isLoading,
   hasError,
+  updatedAt,
 }: {
   label: string;
   value: string | null;
   isLoading: boolean;
   hasError: boolean;
+  updatedAt: number;
 }) {
   return (
     <div className="rounded-lg border border-border bg-card p-5">
@@ -44,6 +46,10 @@ function StatTile({
           {value}
         </span>
       )}
+      <span className="mt-2 block text-[10px] text-slate-500">
+        Source: indexer statistics
+        {updatedAt > 0 && ` · Updated ${new Date(updatedAt).toLocaleString()}`}
+      </span>
     </div>
   );
 }
@@ -55,7 +61,7 @@ function StatTile({
  * without connecting a wallet.
  */
 export default function AnalyticsClient() {
-  const { stats, isLoading, error } = useStats();
+  const { stats, isLoading, error, updatedAt } = useStats();
   const hasError = error != null;
 
   return (
@@ -69,6 +75,18 @@ export default function AnalyticsClient() {
             Total value locked, funding volume, and pool utilization across the
             ClearLedger protocol.
           </p>
+          <p className="mt-2 text-xs text-slate-500">
+            Figures reflect Stellar Testnet activity only.{" "}
+            <a
+              href="https://github.com/Stellar-Clear/clearledger/blob/main/docs/ANALYTICS_METRICS.md"
+              className="text-primary hover:underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Read the metric definitions and on-chain sources
+            </a>
+            .
+          </p>
         </div>
 
         <section aria-label="Protocol statistics" className="space-y-3">
@@ -78,6 +96,7 @@ export default function AnalyticsClient() {
               value={formatCompactUsdc(stats?.total_usdc_financed)}
               isLoading={isLoading}
               hasError={hasError}
+              updatedAt={updatedAt}
             />
             <StatTile
               label="Pool Utilization"
@@ -88,6 +107,7 @@ export default function AnalyticsClient() {
               }
               isLoading={isLoading}
               hasError={hasError}
+              updatedAt={updatedAt}
             />
             <StatTile
               label="Average Yield"
@@ -96,12 +116,14 @@ export default function AnalyticsClient() {
               }
               isLoading={isLoading}
               hasError={hasError}
+              updatedAt={updatedAt}
             />
             <StatTile
               label="Registered Issuers"
               value={stats ? String(stats.registered_issuers) : null}
               isLoading={isLoading}
               hasError={hasError}
+              updatedAt={updatedAt}
             />
             <StatTile
               label="Total Invoices"
@@ -110,6 +132,7 @@ export default function AnalyticsClient() {
               }
               isLoading={isLoading}
               hasError={hasError}
+              updatedAt={updatedAt}
             />
             <StatTile
               label="Active Invoices"
@@ -120,12 +143,14 @@ export default function AnalyticsClient() {
               }
               isLoading={isLoading}
               hasError={hasError}
+              updatedAt={updatedAt}
             />
             <StatTile
               label="Invoices Repaid"
               value={stats ? stats.total_repaid.toLocaleString("en-US") : null}
               isLoading={isLoading}
               hasError={hasError}
+              updatedAt={updatedAt}
             />
             <StatTile
               label="Invoices Defaulted"
@@ -134,6 +159,7 @@ export default function AnalyticsClient() {
               }
               isLoading={isLoading}
               hasError={hasError}
+              updatedAt={updatedAt}
             />
           </div>
           {hasError && (

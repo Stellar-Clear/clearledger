@@ -10,14 +10,16 @@
     "lint": "next lint",
     "test:e2e": "playwright test --reporter=line",
     "test": "vitest run --coverage --passWithNoTests",
-    "test:coverage": "vitest run --coverage --passWithNoTests"
+    "test:coverage": "vitest run --coverage --passWithNoTests",
+    "check:translations": "node scripts/check-translations.mjs",
+    "test:translations": "node scripts/check-translations.mjs --self-test"
   },
   "dependencies": {
     "@radix-ui/react-popover": "^1.1.23",
     "@radix-ui/react-slot": "^1.2.5",
     "@stellar/freighter-api": "^2.0.0",
-    "@stellar/stellar-sdk": "^13.3.0",
-    "@tanstack/react-query": "^5.101.0",
+    "@stellar/stellar-sdk": "^17.2.1",
+    "@tanstack/react-query": "^5.104.1",
     "@tanstack/react-virtual": "^3.14.8",
     "@clearledger/sdk": "workspace:*",
     "@vercel/analytics": "^2.0.1",
@@ -32,14 +34,14 @@
     "next": "14.2.35",
     "next-intl": "^3.26.5",
     "react": "^19",
-    "react-day-picker": "^10.0.1",
+    "react-day-picker": "^10.0.2",
     "react-dom": "^19",
     "recharts": "^2.15.4",
     "sonner": "^2.0.7",
-    "tailwind-merge": "^3.6.0",
+    "tailwind-merge": "^3.7.0",
     "tailwindcss-animate": "^1.0.7",
     "zod": "^4.4.3",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@next/bundle-analyzer": "14.2.35",
@@ -51,16 +53,16 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.0.3",
-    "@vitest/coverage-v8": "^4.1.9",
+    "@vitest/coverage-v8": "^5.0.3",
     "axe-core": "^4.13.0",
     "eslint": "^8",
-    "eslint-config-next": "14.2.35",
+    "eslint-config-next": "16.4.2",
     "jsdom": "^29.1.1",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "typescript": "^5",
     "vite": "^8.1.0",
-    "vitest": "^4.1.9",
+    "vitest": "^5.0.5",
     "vitest-axe": "^0.1.0"
   }
 }

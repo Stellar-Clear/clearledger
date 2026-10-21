@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/base64"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"clearledger/indexer/db"
@@ -84,12 +86,36 @@ func (h *APIHandler) HandleGetEvents(w http.ResponseWriter, r *http.Request) {
 	limitStr := r.URL.Query().Get("limit")
 	limit := 20
 	if limitStr != "" {
-		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
-			limit = parsed
+		parsed, err := strconv.Atoi(limitStr)
+		if err != nil || parsed < 1 {
+			http.Error(w, "invalid limit parameter: must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+		if limit > 100 {
+			limit = 100
 		}
 	}
 
-	events, err := h.getRecentEventsFn(r.Context(), limit)
+	var events []*db.EventLog
+	var err error
+	if encoded := r.URL.Query().Get("cursor"); encoded != "" {
+		decoded, decodeErr := base64.RawURLEncoding.DecodeString(encoded)
+		stamp, idText, ok := strings.Cut(string(decoded), ":")
+		if decodeErr != nil || !ok {
+			http.Error(w, "invalid cursor parameter", http.StatusBadRequest)
+			return
+		}
+		timestamp, timeErr := strconv.ParseInt(stamp, 10, 64)
+		id, idErr := strconv.Atoi(idText)
+		if timeErr != nil || idErr != nil || id < 1 {
+			http.Error(w, "invalid cursor parameter", http.StatusBadRequest)
+			return
+		}
+		events, err = h.getRecentEventsPageFn(r.Context(), limit+1, timestamp, id)
+	} else {
+		events, err = h.getRecentEventsFn(r.Context(), limit+1)
+	}
 	if err != nil {
 		// The raw DB error can disclose table/column names; log it and return
 		// a generic message (issue #921).
@@ -99,6 +125,12 @@ func (h *APIHandler) HandleGetEvents(w http.ResponseWriter, r *http.Request) {
 
 	if events == nil {
 		events = []*db.EventLog{}
+	}
+	if len(events) > limit {
+		last := events[limit-1]
+		cursor := base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(last.LedgerClosedAt, 10) + ":" + strconv.Itoa(last.ID)))
+		w.Header().Set("X-Next-Cursor", cursor)
+		events = events[:limit]
 	}
 
 	writeJSON(w, http.StatusOK, events)
@@ -143,18 +175,18 @@ func (h *APIHandler) HandleGetPoolSnapshots(w http.ResponseWriter, r *http.Reque
 func (h *APIHandler) HandleGetLPPosition(w http.ResponseWriter, r *http.Request) {
 	address := chi.URLParam(r, "address")
 	if address == "" {
-		http.Error(w, "missing address parameter", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "missing address parameter")
 		return
 	}
 
 	if _, err := keypair.Parse(address); err != nil {
-		http.Error(w, "invalid address format", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "invalid address format")
 		return
 	}
 
 	addrVal, err := soroban.MakeAddressScVal(address)
 	if err != nil {
-		http.Error(w, "failed to build address ScVal", http.StatusInternalServerError)
+		internalError(w, r, "failed to build address ScVal", err)
 		return
 	}
 

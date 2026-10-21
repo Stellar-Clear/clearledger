@@ -15,6 +15,44 @@ Health check. Returns 200 if the indexer is running.
 
 Returns 503 with `{"status": "degraded", "error": "..."}` when the listener or database is unavailable.
 
+## GET /diagnostics
+
+Reports whether each external API-backed feature is configured and reachable.
+**Requires JWT** (`Authorization: Bearer <jwt>`), because the response describes
+operational state even though it contains no secrets. The endpoint always
+returns 200 for an authenticated request, including when a dependency is down,
+so the client can render the diagnostics view.
+
+```json
+{
+  "status": "degraded",
+  "checked_at": "2026-01-15T12:00:00Z",
+  "features": [
+    {
+      "name": "horizon",
+      "configured": true,
+      "healthy": true,
+      "status_code": 200,
+      "latency_ms": 84
+    },
+    {
+      "name": "soroban_rpc",
+      "configured": true,
+      "healthy": false,
+      "status_code": 503,
+      "latency_ms": 120,
+      "error_class": "upstream_error"
+    }
+  ]
+}
+```
+
+`error_class` is a stable value (`not_configured`, `timeout`, `network_error`,
+`unauthorized`, `rate_limited`, `upstream_error`, `invalid_response`,
+`rpc_error`, `unhealthy`, and so on). The response intentionally omits endpoint
+URLs, credentials, JWT secrets, server seeds, and raw upstream error text,
+since hosted provider URLs can carry API keys.
+
 ## GET /metrics
 
 Prometheus-format metrics for the indexer service. No JWT required.
@@ -99,7 +137,10 @@ Returns the LP position for a given Stellar address.
 
 ## GET /stats
 
-Protocol-level aggregated statistics for the landing page.
+Protocol-level aggregated statistics for the landing page. See
+[Analytics metrics and on-chain sources](../ANALYTICS_METRICS.md) for each
+field's formula, inclusion rules, units, timestamps, and producing contract
+events.
 
 ```json
 {

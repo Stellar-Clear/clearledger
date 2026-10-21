@@ -7,6 +7,7 @@ ClearLedger is an open-source Stellar testnet prototype for coordinating invoice
 
 ## Start here
 
+- [Stellar Testnet quickstart](QUICKSTART.md)
 - [What ClearLedger does](introduction/what-is-clearledger.md)
 - [How the workflow operates](introduction/how-it-works.md)
 - [The trade finance problem](introduction/the-problem.md)
@@ -23,13 +24,20 @@ ClearLedger is an open-source Stellar testnet prototype for coordinating invoice
 ## Protocol and development
 
 - [Architecture](ARCHITECTURE.md)
+- [Production readiness gates](PRODUCTION_READINESS.md)
 - [Invoice lifecycle](protocol/invoice-lifecycle.md)
 - [Liquidity pool mechanics](protocol/liquidity-pool.md)
 - [Economic model and default risk](protocol/economic-model.md)
+- [Analytics metrics and on-chain sources](ANALYTICS_METRICS.md)
 - [Local development setup](developer-guide/local-setup.md)
 - [Indexer API reference](developer-guide/indexer-api-reference.md)
 - [How to contribute](contributing/how-to-contribute.md)
 
+## Accessibility
+
+- [Accessibility statement](ACCESSIBILITY.md) — tested keyboard flows, known
+  limitations and how to report an accessibility problem.
+
 ## Testnet notice
 
-The application and contracts are experimental and have not been formally audited. Testnet activity is for evaluation only; it is not a live financing offer, and no yield or repayment is guaranteed. Never deposit real funds.
+The application and contracts are experimental and have not been formally audited. Testnet activity is for evaluation only; it is not a live financing offer, and no yield or repayment is guaranteed. Never deposit real funds. See [production readiness gates](PRODUCTION_READINESS.md) for the work still required before any Mainnet deployment.
