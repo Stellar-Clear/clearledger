@@ -1,8 +1,6 @@
 import type { ReactNode } from "react";
 import { toast } from "sonner";
-
-const explorerUrl = (txHash: string) =>
-  `https://stellar.expert/explorer/testnet/tx/${txHash}`;
+import { stellarExpertTxUrl } from "@/lib/explorer";
 
 function ToastAnnouncement({
   variant,
@@ -39,14 +37,21 @@ export function showSuccessToast(action: string, txHash?: string) {
   toast.success(
     <ToastAnnouncement variant="success" action={action}>
       {txHash ? (
-        <a
-          href={explorerUrl(txHash)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-primary underline underline-offset-2 hover:text-primary/80 text-xs font-mono"
-        >
-          View on Stellar Expert →
-        </a>
+        <span className="flex flex-col gap-1">
+          <code className="select-all break-all text-[10px] font-mono text-slate-400" aria-label="Transaction hash">
+            {txHash}
+          </code>
+          {stellarExpertTxUrl(txHash) ? (
+            <a
+              href={stellarExpertTxUrl(txHash) ?? undefined}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline underline-offset-2 hover:text-primary/80 text-xs font-mono"
+            >
+              View on Stellar Expert →
+            </a>
+          ) : null}
+        </span>
       ) : null}
     </ToastAnnouncement>,
     {
