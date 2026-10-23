@@ -760,6 +760,11 @@ export default function Marketplace() {
                       </div>
                     )}
 
+                  {!connected && (
+                    <p role="status" className="text-xs font-mono text-slate-400">
+                      {t("console.connectToAct")}
+                    </p>
+                  )}
                   <InvoiceCard
                     invoice={selectedInvoice}
                     role={connected ? role : undefined}

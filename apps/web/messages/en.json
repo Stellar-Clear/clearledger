@@ -223,6 +223,7 @@
       "title": "Management Center",
       "role": "Consoling role: <strong>{role}</strong>",
       "publicView": "PUBLIC VIEW",
+      "connectToAct": "Connect Freighter to fund, list, or manage this invoice. Public details stay visible.",
       "clear": "Clear select",
       "fundingPreview": {
         "title": "POOL FINANCING PREVIEW",
