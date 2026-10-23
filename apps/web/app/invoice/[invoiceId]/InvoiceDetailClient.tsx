@@ -1,5 +1,6 @@
 "use client";
 
+import { formatBps, formatDate } from "@/lib/format";
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -339,7 +340,7 @@ export default function InvoiceDetailClient({
                 <div className="flex flex-wrap justify-between gap-2">
                   <span className="text-slate-500">Maturity Date:</span>
                   <span className="text-slate-300 font-bold">
-                    {new Date(invoice.dueDate * 1000).toLocaleDateString()}
+                    {formatDate(invoice.dueDate)}
                   </span>
                 </div>
                 <div className="flex flex-wrap justify-between gap-2">
@@ -356,7 +357,7 @@ export default function InvoiceDetailClient({
                   <span className="text-slate-500">Discount Rate:</span>
                   <span className="text-primary font-bold">
                     {invoice.discountBps > 0
-                      ? `${(invoice.discountBps / 100).toFixed(2)}%`
+                      ? formatBps(invoice.discountBps)
                       : "—"}
                   </span>
                 </div>
