@@ -11,6 +11,7 @@ import { useWalletStore } from "@/store/wallet";
 import { useProfile } from "@/hooks/useProfile";
 import { DatePicker } from "@/components/ui/date-picker";
 import { getErrorMessage } from "@/lib/errors";
+import { loadInvoiceDraft, saveInvoiceDraft } from "@/lib/invoiceDraft";
 import { SupportDiagnostics } from "@/components/shared/SupportDiagnostics";
 import { fromUsdc, toUsdc } from "@clearledger/sdk";
 
@@ -59,10 +60,32 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
   const [step, setStep] = useState<1 | 2>(1);
   const [isListing, setIsListing] = useState(false);
   const [timeZone, setTimeZone] = useState("your local timezone");
+  // Address whose saved draft has been restored. Drafts are not written until
+  // then, so an empty first render cannot overwrite a saved draft.
+  const [restoredFor, setRestoredFor] = useState<string | null>(null);
 
   useEffect(() => {
     setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || "local time");
   }, []);
+
+  useEffect(() => {
+    if (!address) return;
+    const draft = loadInvoiceDraft(address);
+    if (draft) {
+      setBuyer(draft.buyer);
+      setFaceValue(draft.faceValue);
+      setAsset(draft.asset as AssetType);
+      setDueDate(draft.dueDate);
+      setDiscountBps(draft.discountBps);
+      setListAtCreation(draft.listAtCreation);
+    }
+    setRestoredFor(address);
+  }, [address]);
+
+  useEffect(() => {
+    if (!address || restoredFor !== address) return;
+    saveInvoiceDraft(address, { buyer, faceValue, asset, dueDate, discountBps, listAtCreation });
+  }, [address, restoredFor, buyer, faceValue, asset, dueDate, discountBps, listAtCreation]);
 
   const parsedValue = useMemo(
     () => parseFloat(faceValue.replace(/,/g, "")) || 0,
