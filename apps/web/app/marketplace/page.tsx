@@ -15,6 +15,7 @@ import { useWalletStore } from "@/store/wallet";
 import { useProfile } from "@/hooks/useProfile";
 import { Invoice } from "@/types";
 import { formatAmount } from "@/lib/assets";
+import { sortInvoicesDeterministically, type InvoiceSortKey, type SortDirection } from "@/lib/invoiceSort";
 import { downloadInvoicesCSV } from "@/lib/invoiceCsv";
 import { getRecentEvents } from "@/lib/api";
 import { ShieldAlert, RotateCcw, Save, Trash2, Menu, Download } from "lucide-react";
@@ -126,6 +127,8 @@ export default function Marketplace() {
     const stored = readFiltersFromStorage();
     return stored?.maxAmount ?? "";
   });
+  const [sortKey, setSortKey] = useState<InvoiceSortKey>("faceValue");
+  const [sortDir, setSortDir] = useState<SortDirection>("desc");
   const [maxDiscount, setMaxDiscount] = useState<string>(() => {
     const stored = readFiltersFromStorage();
     return stored?.maxDiscount ?? "500";
@@ -175,13 +178,8 @@ export default function Marketplace() {
       result = result.filter((inv) => inv.discountBps <= discBps);
     }
 
-    // Sort by Face Value Descending by default
-    return result.sort((a, b) => {
-      if (b.faceValue > a.faceValue) return 1;
-      if (b.faceValue < a.faceValue) return -1;
-      return 0;
-    });
-  }, [invoices, minAmount, maxAmount, maxDiscount]);
+    return sortInvoicesDeterministically(result, sortKey, sortDir);
+  }, [invoices, minAmount, maxAmount, maxDiscount, sortKey, sortDir]);
 
   const handlePageChange = (page: number) => {
     setInvoicePage(page);
@@ -435,6 +433,36 @@ export default function Marketplace() {
               aria-valuemin={50}
               aria-valuemax={500}
             />
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="marketplace-sort" className="text-[10px] text-slate-500 font-bold uppercase">
+              Sort this page by
+            </label>
+            <div className="flex gap-2">
+              <select
+                id="marketplace-sort"
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as InvoiceSortKey)}
+                className="w-full bg-[#080c10] border border-border rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-primary"
+              >
+                <option value="faceValue">Face value</option>
+                <option value="dueDate">Due date</option>
+                <option value="discountBps">Discount (bps)</option>
+              </select>
+              <select
+                aria-label="Sort direction"
+                value={sortDir}
+                onChange={(e) => setSortDir(e.target.value as SortDirection)}
+                className="bg-[#080c10] border border-border rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-primary"
+              >
+                <option value="desc">Descending</option>
+                <option value="asc">Ascending</option>
+              </select>
+            </div>
+            <p className="text-[10px] text-slate-500">
+              Sorts the invoices loaded on this page. Discount is stored in basis points (100 bps = 1%).
+            </p>
           </div>
 
           {/* Saved Searches / Presets */}
