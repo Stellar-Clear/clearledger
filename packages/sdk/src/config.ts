@@ -75,10 +75,41 @@ export class SDKConfigurationError extends Error {
   }
 }
 
-export function validateSDKConfiguration(config: SDKConfig = activeConfig): void {
+const KNOWN_PASSPHRASES: readonly string[] = [Networks.TESTNET, Networks.PUBLIC];
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Checks the network fields and names the first one that is invalid, so a
+ * misconfigured deployment fails with an actionable message instead of a
+ * generic RPC error later.
+ */
+function validateNetworkFields(config: SDKConfig): void {
   if (!config.networkPassphrase || !config.sorobanRpcUrl) {
     throw new SDKConfigurationError("Stellar network configuration is incomplete");
   }
+  if (!KNOWN_PASSPHRASES.includes(config.networkPassphrase)) {
+    throw new SDKConfigurationError(
+      "Invalid networkPassphrase: expected the Stellar Testnet or Public Network passphrase",
+    );
+  }
+  if (!isHttpUrl(config.sorobanRpcUrl)) {
+    throw new SDKConfigurationError("Invalid sorobanRpcUrl: expected an http or https URL");
+  }
+  if (!isHttpUrl(config.horizonUrl)) {
+    throw new SDKConfigurationError("Invalid horizonUrl: expected an http or https URL");
+  }
+}
+
+export function validateSDKConfiguration(config: SDKConfig = activeConfig): void {
+  validateNetworkFields(config);
   const missing = Object.entries(config.contractIds)
     .filter(([, contractId]) => !contractId)
     .map(([name]) => name);

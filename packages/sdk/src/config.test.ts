@@ -24,6 +24,7 @@ import {
   configureSDK,
   getConfig,
   getSorobanServer,
+  validateSDKConfiguration,
 } from "./config.js";
 
 describe("config", () => {
@@ -122,5 +123,36 @@ describe("config", () => {
       const server = getSorobanServer();
       expect((server as any).url).toBe("https://custom-rpc.example.com");
     });
+  });
+});
+
+describe("validateSDKConfiguration network fields", () => {
+  const valid = () => ({
+    horizonUrl: "https://horizon-testnet.stellar.org",
+    sorobanRpcUrl: "https://soroban-testnet.stellar.org",
+    networkPassphrase: Networks.TESTNET,
+    contractIds: { registry: "C1", invoice: "C2", pool: "C3", escrow: "C4", agentRegistry: "C5" },
+    usdc: { issuer: "G1", assetCode: "USDC" },
+  });
+
+  it("accepts the testnet and public passphrases", () => {
+    expect(() => validateSDKConfiguration(valid())).not.toThrow();
+    expect(() => validateSDKConfiguration({ ...valid(), networkPassphrase: Networks.PUBLIC })).not.toThrow();
+  });
+
+  it("names networkPassphrase when it is not a known network", () => {
+    expect(() => validateSDKConfiguration({ ...valid(), networkPassphrase: "Some Other Net" })).toThrow(
+      /Invalid networkPassphrase/,
+    );
+  });
+
+  it("names sorobanRpcUrl when it is not an http URL", () => {
+    expect(() => validateSDKConfiguration({ ...valid(), sorobanRpcUrl: "ftp://rpc.example.com" })).toThrow(
+      /Invalid sorobanRpcUrl/,
+    );
+  });
+
+  it("names horizonUrl when it is not a URL", () => {
+    expect(() => validateSDKConfiguration({ ...valid(), horizonUrl: "not a url" })).toThrow(/Invalid horizonUrl/);
   });
 });
