@@ -16,6 +16,6 @@
     "test:scripts": "node --test scripts/check-sdk-artifacts.test.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.4.5"
+    "typescript": "^7.0.2"
   }
 }
