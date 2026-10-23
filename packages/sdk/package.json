@@ -22,7 +22,7 @@
     "@typescript-eslint/parser": "^8.71.1",
     "eslint": "^10.13.0",
     "@vitest/coverage-v8": "^4.1.9",
-    "typescript": "^5.4.5",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.9"
   }
 }
