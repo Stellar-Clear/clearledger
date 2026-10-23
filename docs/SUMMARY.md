@@ -49,6 +49,7 @@
 - [Indexer API Reference](developer-guide/indexer-api-reference.md)
 - [Contract Event Versioning](developer-guide/event-versioning.md)
 - [Indexer Operations: Recovery, Backfill, and Webhook Replay](developer-guide/indexer-operations.md)
+- [Indexer Signing: Trust Boundary and Key Rotation](developer-guide/indexer-signing.md)
 - [Analytics Metrics and On-Chain Sources](ANALYTICS_METRICS.md)
 - [Webhooks](webhooks.md)
 - [Security Headers](developer-guide/security-headers.md)
