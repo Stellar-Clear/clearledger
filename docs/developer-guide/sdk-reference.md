@@ -197,6 +197,9 @@ const stats = await pool.getStats(signerPublicKey);
 // stats.totalYieldDistributed — bigint
 // stats.activeInvoiceCount   — number
 
+// Read the on-chain emergency pause state before offering pool writes.
+const poolPaused = await pool.getPauseState(signerPublicKey);
+
 // Get utilization rate as a standalone call
 const rateBps = await pool.getUtilizationRate(signerPublicKey);
 

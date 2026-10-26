@@ -138,6 +138,24 @@ describe("PoolClient", () => {
     });
   });
 
+  describe("getPauseState", () => {
+    it("reads the versioned config pause flag", async () => {
+      vi.mocked(client["readContract"]).mockResolvedValue(true);
+
+      await expect(
+        client.getPauseState(
+          "GACR43ILX6H4PGAOO5QKSZLU4ZJMGT3E66EAUDPLM5J6YTP4Y3PSHWGB",
+        ),
+      ).resolves.toBe(true);
+      expect(client["readContract"]).toHaveBeenCalledWith(
+        "get_config_v1",
+        [],
+        "GACR43ILX6H4PGAOO5QKSZLU4ZJMGT3E66EAUDPLM5J6YTP4Y3PSHWGB",
+        expect.any(Function),
+      );
+    });
+  });
+
   describe("getLPPosition", () => {
     it("calls readContract with correct arguments", async () => {
       const mockPosition = { shares: 500n };

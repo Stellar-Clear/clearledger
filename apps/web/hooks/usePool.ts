@@ -46,6 +46,18 @@ export function usePool() {
     staleTime: 45000,
   });
 
+  const pauseStateQuery = useQuery({
+    queryKey: ["poolPauseState", address],
+    queryFn: () => {
+      if (!address || !poolClient)
+        throw new Error("Pool pause state is unavailable");
+      return poolClient.getPauseState(address);
+    },
+    enabled: !!address && !!poolClient,
+    refetchInterval: 15_000,
+    staleTime: 15_000,
+  });
+
   const positionQuery = useQuery({
     queryKey: ["lpPosition", address],
     queryFn: () => getLPPosition(address!),
@@ -56,6 +68,11 @@ export function usePool() {
     mutationFn: async ({ amount, asset }: DepositArguments) => {
       if (!address) {
         throw new Error("Wallet not connected");
+      }
+      if (pauseStateQuery.data === true) {
+        throw new Error(
+          "Pool is paused; deposits are unavailable until it is resumed",
+        );
       }
 
       // Issued assets require an allowance. Native XLM does not.
@@ -86,6 +103,11 @@ export function usePool() {
       if (!address) {
         throw new Error("Wallet not connected");
       }
+      if (pauseStateQuery.data === true) {
+        throw new Error(
+          "Pool is paused; withdrawals are unavailable until it is resumed",
+        );
+      }
       if (!poolClient) throw new Error("Pool client not available");
       return poolClient.withdraw(address, shares, address);
     },
@@ -108,6 +130,11 @@ export function usePool() {
     isStatsLoading: statsQuery.isLoading,
     statsError: statsQuery.error,
     refetchStats: statsQuery.refetch,
+
+    pauseState: pauseStateQuery.data,
+    isPauseStateLoading: pauseStateQuery.isLoading,
+    pauseStateError: pauseStateQuery.error,
+    refetchPauseState: pauseStateQuery.refetch,
 
     position: positionQuery.data,
     isPositionLoading: positionQuery.isLoading,

@@ -139,6 +139,15 @@ export function parsePoolStats(native: unknown): PoolStats {
   return poolStatsSchema.parse(normalized);
 }
 
+/** Parses the `paused` field returned by the versioned pool configuration. */
+export function parsePoolPauseState(native: unknown): boolean {
+  const normalized = normalize(native);
+  if (typeof normalized.paused !== "boolean") {
+    throw new Error("Pool configuration did not include a boolean pause state");
+  }
+  return normalized.paused;
+}
+
 // LPPosition Schema
 export const lpPositionSchema = z.object({
   shares: bigintSchema,

@@ -215,7 +215,10 @@ describe("useInvoices", () => {
 
     const mockFund = vi.fn().mockResolvedValue("ok");
     vi.mocked(PoolClient).mockImplementation(function () {
-      return { fundInvoice: mockFund };
+      return {
+        getPauseState: vi.fn().mockResolvedValue(false),
+        fundInvoice: mockFund,
+      };
     } as any);
 
     const { result } = renderHook(() => useInvoiceActions());
@@ -234,6 +237,28 @@ describe("useInvoices", () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["lpPosition", "G123"],
     });
+  });
+
+  it("does not fund an invoice when the pool is paused", async () => {
+    act(() => {
+      useWalletStore.getState().connect("G123", "testnet");
+    });
+
+    const mockFund = vi.fn();
+    vi.mocked(PoolClient).mockImplementation(function () {
+      return {
+        getPauseState: vi.fn().mockResolvedValue(true),
+        fundInvoice: mockFund,
+      };
+    } as any);
+    const { result } = renderHook(() => useInvoiceActions());
+
+    await expect(
+      act(async () => {
+        await result.current.fundInvoice({ invoiceId: "inv1" });
+      }),
+    ).rejects.toThrow(/pool is paused/i);
+    expect(mockFund).not.toHaveBeenCalled();
   });
 
   it("fundInvoice fails if no wallet", async () => {
