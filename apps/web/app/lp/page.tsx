@@ -19,6 +19,7 @@ import { useInvoiceList } from "@/hooks/useInvoices";
 import { ExternalLink } from "lucide-react";
 import { TxHistory } from "@/components/shared/TxHistory";
 import { explainPoolLiquidity } from "@/lib/poolLiquidity";
+import { formatUsdcStroops, parseUsdcInput } from "@/lib/usdcInput";
 
 const poolContractID = process.env.NEXT_PUBLIC_POOL_CONTRACT_ID || "";
 const explorerNetwork = ["mainnet", "public"].includes(
@@ -95,6 +96,7 @@ export default function LPDashboard() {
     isLoading: isInvoiceSnapshotLoading,
   } = useInvoiceList({ page: 1, limit: 100 });
   const [depositAmount, setDepositAmount] = useState("");
+  const normalizedDeposit = parseUsdcInput(depositAmount);
   const [withdrawShares, setWithdrawShares] = useState("");
   const [simDetails, setSimDetails] = useState<SimulationResult | null>(null);
   const [simError, setSimError] = useState<string | null>(null);
@@ -105,8 +107,8 @@ export default function LPDashboard() {
   const [isWithdrawSimulating, setIsWithdrawSimulating] = useState(false);
 
   useEffect(() => {
-    const amount = Number(depositAmount);
-    if (!address || !Number.isFinite(amount) || amount <= 0) {
+    const amountStroops = parseUsdcInput(depositAmount);
+    if (!address || amountStroops === null || amountStroops <= 0n) {
       setSimDetails(null);
       setSimError(null);
       return;
@@ -117,7 +119,6 @@ export default function LPDashboard() {
       setIsSimulating(true);
       setSimError(null);
       try {
-        const amountStroops = BigInt(Math.floor(amount * STROOPS_PER_UNIT));
         const client = new PoolClient(poolContractID);
         const result = await client.simulateTransaction(
           "deposit",
@@ -201,11 +202,11 @@ export default function LPDashboard() {
 
   const handleDeposit = async (event: React.FormEvent) => {
     event.preventDefault();
-    const amount = Number(depositAmount);
-    if (!Number.isFinite(amount) || amount <= 0) return;
+    const amount = parseUsdcInput(depositAmount);
+    if (amount === null || amount <= 0n) return;
 
     await deposit({
-      amount: BigInt(Math.floor(amount * STROOPS_PER_UNIT)),
+      amount,
       asset: "USDC",
     });
     setDepositAmount("");
@@ -511,13 +512,18 @@ export default function LPDashboard() {
             </label>
             <input
               id="deposit-amount"
-              type="number"
-              min="0"
-              step="any"
+              type="text"
+              inputMode="decimal"
               value={depositAmount}
               onChange={(event) => setDepositAmount(event.target.value)}
+              aria-describedby="deposit-normalized-amount"
               className="w-full rounded border border-border bg-slate-950 px-3 py-2 text-white"
             />
+            <p id="deposit-normalized-amount" role="status" aria-live="polite" className="text-xs text-slate-300">
+              {normalizedDeposit !== null && normalizedDeposit > 0n
+                ? `Normalized USDC amount before signing: ${formatUsdcStroops(normalizedDeposit)} USDC`
+                : "Enter an amount using your decimal separator (up to 7 decimal places)."}
+            </p>
             <SimulationPreview
               details={simDetails}
               error={simError}
