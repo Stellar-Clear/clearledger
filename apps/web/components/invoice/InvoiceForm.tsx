@@ -11,7 +11,11 @@ import { useWalletStore } from "@/store/wallet";
 import { useProfile } from "@/hooks/useProfile";
 import { DatePicker } from "@/components/ui/date-picker";
 import { getErrorMessage } from "@/lib/errors";
-import { loadInvoiceDraft, saveInvoiceDraft } from "@/lib/invoiceDraft";
+import {
+  clearInvoiceDraft,
+  loadInvoiceDraft,
+  saveInvoiceDraft,
+} from "@/lib/invoiceDraft";
 import { SupportDiagnostics } from "@/components/shared/SupportDiagnostics";
 import { fromUsdc, toUsdc } from "@clearledger/sdk";
 
@@ -238,6 +242,11 @@ export function InvoiceForm({ onSuccess }: InvoiceFormProps) {
         listingFailed = false;
       }
 
+      // Clear the draft here rather than relying on the save effect: the
+      // dashboard closes the modal in onSuccess, which unmounts this form
+      // before that effect can run, so the created invoice would reappear as
+      // a draft the next time the form opens.
+      if (address) clearInvoiceDraft(address);
       setBuyer("");
       setFaceValue("");
       setDueDate("");
