@@ -19,6 +19,7 @@ import { useInvoiceList } from "@/hooks/useInvoices";
 import { ExternalLink } from "lucide-react";
 import { TxHistory } from "@/components/shared/TxHistory";
 import { explainPoolLiquidity } from "@/lib/poolLiquidity";
+import { LpYieldDisclosure } from "@/components/shared/LpYieldDisclosure";
 
 const poolContractID = process.env.NEXT_PUBLIC_POOL_CONTRACT_ID || "";
 const explorerNetwork = ["mainnet", "public"].includes(
@@ -348,6 +349,9 @@ export default function LPDashboard() {
                   />
                 )}
               </div>
+              <div className="w-full md:max-w-xs">
+                <LpYieldDisclosure />
+              </div>
             </div>
           )}
         </section>
@@ -464,6 +468,7 @@ export default function LPDashboard() {
                   value={formatShareValue(position?.yieldEarned)}
                 />
               </div>
+              <LpYieldDisclosure />
             </div>
           )}
         </section>
@@ -476,6 +481,7 @@ export default function LPDashboard() {
             <h2 className="text-sm font-bold uppercase tracking-wider text-white">
               Deposit USDC
             </h2>
+            <LpYieldDisclosure />
             <aside className="rounded border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200/80">
               <p className="font-semibold text-amber-200">Before depositing on Testnet</p>
               <p className="mt-1">
@@ -544,6 +550,7 @@ export default function LPDashboard() {
             <h2 className="text-sm font-bold uppercase tracking-wider text-white">
               Withdraw Liquidity
             </h2>
+            <LpYieldDisclosure />
             <label
               htmlFor="withdraw-shares"
               className="block text-sm text-slate-300"
