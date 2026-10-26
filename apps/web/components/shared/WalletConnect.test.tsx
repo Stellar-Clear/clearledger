@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { WalletConnect } from "./WalletConnect";
 import { useWallet } from "@/hooks/useWallet";
-import { isFreighterInstalled } from "@/lib/freighter";
+import { checkFreighterAvailability } from "@/lib/freighter";
 import { useWalletStore } from "@/store/wallet";
 
 const freighterApi = vi.hoisted(() => ({
@@ -28,7 +28,7 @@ vi.mock("@/hooks/useWallet", () => {
 });
 
 vi.mock("@/lib/freighter", () => ({
-  isFreighterInstalled: vi.fn().mockResolvedValue(true),
+  checkFreighterAvailability: vi.fn().mockResolvedValue("installed"),
   // Issue #873's post-connect watcher; a no-op stop function keeps these
   // render tests focused on WalletConnect's own UI.
   watchFreighterChanges: vi.fn(() => () => {}),
@@ -324,11 +324,41 @@ describe("WalletConnect", () => {
       connectWallet: vi.fn(),
       disconnectWallet: vi.fn(),
     } as any);
-    vi.mocked(isFreighterInstalled).mockResolvedValue(false);
+    vi.mocked(checkFreighterAvailability).mockResolvedValue("not-installed");
 
     render(<WalletConnect />);
 
     expect(await screen.findByText(/Install Freighter/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Connect Wallet/i)).not.toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /Install Freighter/i });
+    expect(link).toHaveAttribute("href", "https://www.freighter.app/");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(
+      screen.getByRole("button", { name: /I installed it, retry/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the connect button after retry once Freighter is installed", async () => {
+    vi.mocked(useWallet).mockReturnValue({
+      connected: false,
+      loading: false,
+      address: null,
+      error: null,
+      connectWallet: vi.fn(),
+      disconnectWallet: vi.fn(),
+    } as any);
+    vi.mocked(checkFreighterAvailability)
+      .mockResolvedValueOnce("not-installed")
+      .mockResolvedValue("installed");
+
+    render(<WalletConnect />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /I installed it, retry/i }),
+    );
+
+    expect(await screen.findByText(/Connect Wallet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Freighter wallet not detected/i)).toBeNull();
   });
 
   it("copies the wallet address when connected", async () => {
@@ -341,7 +371,7 @@ describe("WalletConnect", () => {
       connectWallet: vi.fn(),
       disconnectWallet: vi.fn(),
     } as any);
-    vi.mocked(isFreighterInstalled).mockResolvedValue(true);
+    vi.mocked(checkFreighterAvailability).mockResolvedValue("installed");
 
     render(<WalletConnect />);
 
@@ -363,7 +393,7 @@ describe("WalletConnect", () => {
       connectWallet: vi.fn(),
       disconnectWallet: vi.fn(),
     } as any);
-    vi.mocked(isFreighterInstalled).mockResolvedValue(true);
+    vi.mocked(checkFreighterAvailability).mockResolvedValue("installed");
     vi.mocked(navigator.clipboard.writeText).mockRejectedValueOnce(
       new Error("Clipboard permission denied"),
     );

@@ -306,3 +306,51 @@ export async function getFreighterPublicKey(): Promise<string> {
     throw mapFreighterError(err);
   }
 }
+
+/**
+ * Result of {@link checkFreighterAvailability}:
+ * - `"installed"` — the extension responded (it may still be locked or
+ *   disconnected; that is handled later by the connect flow).
+ * - `"not-installed"` — the extension reported itself absent, or never
+ *   answered within the timeout (nothing is injected to answer the request).
+ * - `"error"` — the check itself threw. This is deliberately NOT treated as
+ *   "not installed" so a transient failure never tells an installed user to
+ *   install the extension.
+ */
+export type FreighterAvailability = "installed" | "not-installed" | "error";
+
+/** Default time to wait for the extension to answer a presence check. */
+export const FREIGHTER_DETECT_TIMEOUT_MS = 3000;
+
+/**
+ * Detects whether the Freighter extension is present, distinguishing
+ * "absent" from "check failed". Never throws and never hangs: the
+ * `@stellar/freighter-api` presence check relies on an injected content
+ * script, so it is raced against a timeout.
+ *
+ * @param timeoutMs — How long to wait before concluding nothing answered.
+ */
+export async function checkFreighterAvailability(
+  timeoutMs: number = FREIGHTER_DETECT_TIMEOUT_MS,
+): Promise<FreighterAvailability> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), timeoutMs);
+  });
+  try {
+    const res = await Promise.race([isConnected(), timeout]);
+    if (res === "timeout") return "not-installed";
+    if (typeof res === "boolean") return res ? "installed" : "not-installed";
+    if (res && typeof res === "object" && "isConnected" in res) {
+      return (res as FreighterConnectedResponse).isConnected
+        ? "installed"
+        : "not-installed";
+    }
+    return "not-installed";
+  } catch (err) {
+    console.error("Failed to detect Freighter:", err);
+    return "error";
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { Button } from "@/components/ui/button";
-import { isFreighterInstalled } from "@/lib/freighter";
+import { useFreighterInstallStatus } from "@/hooks/useFreighterInstallStatus";
+import { FreighterInstallPrompt } from "./FreighterInstallPrompt";
 import { useWalletStore } from "@/store/wallet";
 import {
   Wallet,
@@ -33,17 +34,13 @@ export function WalletConnect() {
   } = useWallet();
 
   const network = useWalletStore((s) => s.network);
-  const [installed, setInstalled] = useState<boolean | null>(null);
+  const install = useFreighterInstallStatus();
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [switchingNetwork, setSwitchingNetwork] = useState(false);
   const [networkSwitchError, setNetworkSwitchError] = useState<string | null>(
     null,
   );
-
-  useEffect(() => {
-    isFreighterInstalled().then(setInstalled);
-  }, []);
 
   const handleCopy = async () => {
     if (!address) return;
@@ -91,18 +88,14 @@ export function WalletConnect() {
     }
   };
 
-  // If Freighter is not installed
-  if (installed === false) {
+  // Not installed: explain, link to Freighter and recover once it appears.
+  // (A connected session is never replaced by this state.)
+  if (install.status === "not-installed" && !connected) {
     return (
-      <a
-        href="https://www.freighter.app/"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-lg hover:bg-amber-500/20 transition-all font-mono"
-      >
-        <span>Install Freighter</span>
-        <ExternalLink className="w-3.5 h-3.5" />
-      </a>
+      <FreighterInstallPrompt
+        onRetry={install.retry}
+        exhausted={install.exhausted}
+      />
     );
   }
 
