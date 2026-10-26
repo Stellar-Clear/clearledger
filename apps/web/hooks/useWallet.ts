@@ -8,6 +8,7 @@ import {
 } from "@/lib/freighter";
 import { useBalances } from "./useBalances";
 import { createErrorHandler } from "@/lib/errors";
+import { isValidAccountAddress } from "@/lib/accountChange";
 
 const { captureError } = createErrorHandler("useWallet");
 const REQUIRED_NETWORK = "testnet";
@@ -131,7 +132,10 @@ export function useWallet() {
         const state = useWalletStore.getState();
         if (!state.connected) return;
 
-        if (change.address && change.address !== state.address) {
+        if (
+          isValidAccountAddress(change.address) &&
+          change.address !== state.address
+        ) {
           // A different account is now selected in Freighter: adopt it so the
           // app never reads balances for — or signs as — a stale address, and
           // drop the previous account's SEP-10 token.

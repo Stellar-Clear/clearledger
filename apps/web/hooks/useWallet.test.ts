@@ -9,6 +9,7 @@ import {
 } from "@/lib/freighter";
 import { initApiClientWithToken } from "@/lib/api";
 import { useBalances } from "./useBalances";
+import { Keypair } from "@stellar/stellar-sdk";
 
 vi.mock("@/lib/freighter", () => ({
   connectFreighter: vi.fn(),
@@ -38,6 +39,10 @@ vi.mock("./useBalances", () => ({
 vi.mock("@stellar/freighter-api", () => ({
   getNetworkDetails: vi.fn().mockResolvedValue({ network: "testnet" }),
 }));
+
+const CHANGED_ADDRESS = Keypair.fromRawEd25519Seed(
+  Buffer.alloc(32, 7),
+).publicKey();
 
 describe("useWallet", () => {
   beforeEach(() => {
@@ -359,19 +364,36 @@ describe("useWallet Freighter change watching (#873)", () => {
 
     await act(async () => {
       watcher.change({
-        address: "GCHANGED",
+        address: CHANGED_ADDRESS,
         previous: { address: "G12345", network: "testnet" },
       });
     });
 
     const state = useWalletStore.getState();
-    expect(state.address).toBe("GCHANGED");
+    expect(state.address).toBe(CHANGED_ADDRESS);
     expect(state.connected).toBe(true);
     expect(state.token).toBeNull();
     // The API client re-sync happens through a lazy import of lib/api.
     await vi.waitFor(() => {
       expect(initApiClientWithToken).toHaveBeenCalled();
     });
+  });
+
+  it("ignores a changed address that is not a valid account StrKey", async () => {
+    act(() => {
+      useWalletStore.getState().connect("G12345", "testnet");
+    });
+    const watcher = captureWatcher();
+    renderHook(() => useWallet());
+
+    await act(async () => {
+      watcher.change({
+        address: "not-a-stellar-address",
+        previous: { address: "G12345", network: "testnet" },
+      });
+    });
+
+    expect(useWalletStore.getState().address).toBe("G12345");
   });
 
   it("restarts the watcher from the new address after a change", () => {
@@ -385,14 +407,14 @@ describe("useWallet Freighter change watching (#873)", () => {
 
     act(() => {
       watcher.change({
-        address: "GCHANGED",
+        address: CHANGED_ADDRESS,
         previous: { address: "G12345", network: "testnet" },
       });
     });
 
     expect(watchFreighterChanges).toHaveBeenCalledTimes(2);
     expect(watchFreighterChanges).toHaveBeenLastCalledWith(
-      { address: "GCHANGED", network: "testnet" },
+      { address: CHANGED_ADDRESS, network: "testnet" },
       expect.any(Function),
       expect.objectContaining({ onError: expect.any(Function) }),
     );
