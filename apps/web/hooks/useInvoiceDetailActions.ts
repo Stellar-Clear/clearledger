@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useInvoiceActions } from "@/hooks/useInvoices";
 import { useConfirmDialogStore } from "@/store/confirmDialog";
-import { getErrorMessage } from "@/lib/errors";
+import { getTransactionFailureMessage } from "@/lib/walletFailure";
 
 /**
  * Owns the ship/confirm/repay/default invoice-status-transition actions for
@@ -46,7 +46,7 @@ export function useInvoiceDetailActions(
       }
       await refetch();
     } catch (err: unknown) {
-      setError(getErrorMessage(err, errorMsg));
+      setError(getTransactionFailureMessage(err, errorMsg));
       setShowPending(false);
     } finally {
       setSubmitting(false);

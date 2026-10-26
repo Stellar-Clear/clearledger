@@ -7,6 +7,7 @@ import { showSuccessToast } from "@/lib/toast";
 import { createErrorHandler } from "@/lib/errors";
 import { useTokenAllowance } from "./useTokenAllowance";
 import { useAppError } from "./useAppError";
+import { getTransactionFailureMessage } from "@/lib/walletFailure";
 import type { AssetType } from "@/types";
 
 const { handleMutationError } = createErrorHandler("usePool");
@@ -29,7 +30,7 @@ export function usePool() {
   const queryClient = useQueryClient();
   const address = useWalletStore((s) => s.address);
   const { ensureAllowance } = useTokenAllowance();
-  const { error: appError, handleError, clearError } = useAppError();
+  const { error: appError, setError, clearError } = useAppError();
 
   const poolClient = useMemo(() => {
     try {
@@ -77,7 +78,7 @@ export function usePool() {
     },
     onError: (error) => {
       handleMutationError(error, "Deposit Failed");
-      handleError(error, "Deposit failed");
+      setError(getTransactionFailureMessage(error, "Deposit failed"));
     },
   });
 
@@ -99,7 +100,7 @@ export function usePool() {
     },
     onError: (error) => {
       handleMutationError(error, "Withdrawal Failed");
-      handleError(error, "Withdrawal failed");
+      setError(getTransactionFailureMessage(error, "Withdrawal failed"));
     },
   });
 

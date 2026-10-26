@@ -204,13 +204,38 @@ describe("usePool", () => {
 
     const { result } = renderHook(() => usePool());
 
-    await expect(
-      act(async () => {
-        await result.current.deposit({ amount: 100n, asset: "USDC" });
-      }),
-    ).rejects.toThrow("Pool full");
+    await act(async () => {
+      await expect(
+        result.current.deposit({ amount: 100n, asset: "USDC" }),
+      ).rejects.toThrow("Pool full");
+    });
 
     expect(toast.showErrorToast).toHaveBeenCalled();
+    expect(result.current.appError).toBe("Pool full");
+  });
+
+  it("deposit shows a cancellation message when the wallet request is declined", async () => {
+    act(() => {
+      useWalletStore.getState().connect("G123", "testnet");
+    });
+
+    vi.mocked(PoolClient).mockImplementation(function () {
+      return {
+        deposit: vi.fn().mockRejectedValue(new Error("User declined access")),
+      };
+    } as any);
+
+    const { result } = renderHook(() => usePool());
+
+    await act(async () => {
+      await expect(
+        result.current.deposit({ amount: 100n, asset: "USDC" }),
+      ).rejects.toThrow("User declined access");
+    });
+
+    expect(result.current.appError).toBe(
+      "You cancelled the request in your wallet. Nothing was submitted.",
+    );
   });
 
   it("withdraw works", async () => {
@@ -274,5 +299,31 @@ describe("usePool", () => {
     ).rejects.toThrow("Insufficient shares");
 
     expect(toast.showErrorToast).toHaveBeenCalled();
+  });
+
+  it("withdraw shows a contract message when the pool contract rejects it", async () => {
+    act(() => {
+      useWalletStore.getState().connect("G123", "testnet");
+    });
+
+    vi.mocked(PoolClient).mockImplementation(function () {
+      return {
+        withdraw: vi
+          .fn()
+          .mockRejectedValue(new Error("HostError: Error(Contract, #12)")),
+      };
+    } as any);
+
+    const { result } = renderHook(() => usePool());
+
+    await act(async () => {
+      await expect(
+        result.current.withdraw({ shares: 50n }),
+      ).rejects.toThrow("HostError");
+    });
+
+    expect(result.current.appError).toBe(
+      "The contract rejected this transaction. Review the inputs and try again.",
+    );
   });
 });

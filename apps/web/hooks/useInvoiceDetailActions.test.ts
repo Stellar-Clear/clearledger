@@ -102,9 +102,47 @@ describe("useInvoiceDetailActions", () => {
       await fn();
     });
 
-    expect(result.current.error).toBe("Soroban RPC timeout");
+    expect(result.current.error).toBe(
+      "Stellar RPC could not be reached or timed out. Check your connection and try again.",
+    );
     expect(result.current.showPending).toBe(false);
     expect(refetch).not.toHaveBeenCalled();
+  });
+
+  it("tells the user a wallet cancellation submitted nothing", async () => {
+    shipInvoice.mockRejectedValueOnce(new Error("User declined access"));
+
+    const { result } = renderHook(() =>
+      useInvoiceDetailActions(invoiceId, refetch),
+    );
+
+    act(() => result.current.ship());
+    const { fn } = requestConfirmation.mock.calls[0][0];
+
+    await act(async () => {
+      await fn();
+    });
+
+    expect(result.current.error).toBe(
+      "You cancelled the request in your wallet. Nothing was submitted.",
+    );
+  });
+
+  it("keeps the action's fallback for an error without a message", async () => {
+    shipInvoice.mockRejectedValueOnce({});
+
+    const { result } = renderHook(() =>
+      useInvoiceDetailActions(invoiceId, refetch),
+    );
+
+    act(() => result.current.ship());
+    const { fn } = requestConfirmation.mock.calls[0][0];
+
+    await act(async () => {
+      await fn();
+    });
+
+    expect(result.current.error).toBe("Unable to mark goods as shipped.");
   });
 
   it("setShowPending lets a caller dismiss the transaction-pending dialog", () => {

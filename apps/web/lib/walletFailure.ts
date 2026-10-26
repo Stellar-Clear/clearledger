@@ -8,6 +8,8 @@
  * errors, then wallet errors.
  */
 
+import { getErrorMessage, getUserFriendlyMessage } from "./errors";
+
 export type WalletFailureKind = "cancelled" | "wallet" | "rpc" | "contract" | "unknown";
 
 export interface WalletFailure {
@@ -45,4 +47,22 @@ export function describeWalletFailure(error: unknown): WalletFailure {
   else if (WALLET.test(text)) kind = "wallet";
 
   return { kind, message: MESSAGES[kind] };
+}
+
+/**
+ * The inline message for a failed wallet-signed transaction. A recognised
+ * failure gets its kind's message; anything else keeps the existing
+ * user-friendly text of the error, or `fallback` when it has none.
+ *
+ * @example
+ * ```ts
+ * getTransactionFailureMessage(new Error("User declined"), "Deposit failed");
+ * // "You cancelled the request in your wallet. Nothing was submitted."
+ * getTransactionFailureMessage({}, "Deposit failed"); // "Deposit failed"
+ * ```
+ */
+export function getTransactionFailureMessage(error: unknown, fallback: string): string {
+  const failure = describeWalletFailure(error);
+  if (failure.kind !== "unknown") return failure.message;
+  return getUserFriendlyMessage(getErrorMessage(error, fallback));
 }

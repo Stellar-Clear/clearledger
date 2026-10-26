@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeWalletFailure } from "./walletFailure";
+import { describeWalletFailure, getTransactionFailureMessage } from "./walletFailure";
 
 describe("describeWalletFailure", () => {
   it("reports a user cancellation", () => {
@@ -36,5 +36,26 @@ describe("describeWalletFailure", () => {
       ].map((text) => describeWalletFailure(text).message),
     );
     expect(messages.size).toBe(5);
+  });
+});
+
+describe("getTransactionFailureMessage", () => {
+  it("uses the message for a recognised failure kind", () => {
+    expect(getTransactionFailureMessage(new Error("User declined the request"), "Deposit failed")).toBe(
+      describeWalletFailure("User declined").message,
+    );
+    expect(getTransactionFailureMessage("HostError: Error(Contract, #7)", "Deposit failed")).toBe(
+      describeWalletFailure("HostError: Error(Contract, #1)").message,
+    );
+  });
+
+  it("keeps the friendly mapping for errors it does not recognise", () => {
+    expect(getTransactionFailureMessage(new Error("tx_bad_auth"), "Deposit failed")).toMatch(/Authorization failed/);
+    expect(getTransactionFailureMessage(new Error("Pool full"), "Deposit failed")).toBe("Pool full");
+  });
+
+  it("falls back when the error has no message", () => {
+    expect(getTransactionFailureMessage({}, "Deposit failed")).toBe("Deposit failed");
+    expect(getTransactionFailureMessage(undefined, "Deposit failed")).toBe("Deposit failed");
   });
 });
