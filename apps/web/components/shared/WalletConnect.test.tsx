@@ -1,6 +1,6 @@
 import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { WalletConnect } from "./WalletConnect";
 import { useWallet } from "@/hooks/useWallet";
 import { checkFreighterAvailability } from "@/lib/freighter";
@@ -57,6 +57,8 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe("WalletConnect", () => {
   it("renders disconnected state", () => {
     vi.mocked(useWallet).mockReturnValue({
@@ -67,6 +69,7 @@ describe("WalletConnect", () => {
     } as any);
     render(<WalletConnect />);
     expect(screen.getByText(/Connect Wallet/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("App network: Testnet")).toBeInTheDocument();
   });
 
   it("renders connecting state", () => {
@@ -111,26 +114,40 @@ describe("WalletConnect", () => {
   });
 
   it.each([
-    ["testnet", "Testnet"],
-    ["mainnet", "Mainnet"],
-  ])("shows the %s badge without a switch button", async (network, badge) => {
-    useWalletStore.setState({ network });
-    vi.mocked(useWallet).mockReturnValue({
-      connected: true,
-      loading: false,
-      address: "GACR43ILX6H4PGAOO5QKSZLU4ZJMGT3E66EAUDPLM5J6YTP4Y3PSHWGBYZ",
-      error: null,
-      connectWallet: vi.fn(),
-      disconnectWallet: vi.fn(),
-    } as any);
+    ["testnet", "Testnet", false],
+    ["mainnet", "Mainnet", true],
+  ])(
+    "shows wallet and app network state for %s",
+    async (network, badge, mismatch) => {
+      useWalletStore.setState({ network });
+      vi.mocked(useWallet).mockReturnValue({
+        connected: true,
+        loading: false,
+        address: "GACR43ILX6H4PGAOO5QKSZLU4ZJMGT3E66EAUDPLM5J6YTP4Y3PSHWGBYZ",
+        error: null,
+        connectWallet: vi.fn(),
+        disconnectWallet: vi.fn(),
+      } as any);
 
-    render(<WalletConnect />);
+      render(<WalletConnect />);
 
-    expect(await screen.findByText(badge)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Switch to Testnet/i }),
-    ).not.toBeInTheDocument();
-  });
+      expect(await screen.findByText(badge)).toBeInTheDocument();
+      expect(screen.getByLabelText("App network: Testnet")).toBeInTheDocument();
+      if (mismatch) {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          /wallet is on Mainnet.*configured for Testnet/i,
+        );
+        expect(
+          screen.getByRole("button", { name: /Switch to Testnet/i }),
+        ).toBeInTheDocument();
+      } else {
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(
+          screen.queryByRole("button", { name: /Switch to Testnet/i }),
+        ).not.toBeInTheDocument();
+      }
+    },
+  );
 
   it("switches to testnet, disables the button while switching, then reconnects", async () => {
     useWalletStore.setState({ network: "futurenet" });
@@ -170,6 +187,30 @@ describe("WalletConnect", () => {
     expect(
       screen.getByRole("button", { name: /Switch to Testnet/i }),
     ).toBeEnabled();
+  });
+
+  it("switches Freighter to PUBLIC when the app is configured for Mainnet", async () => {
+    vi.stubEnv("NEXT_PUBLIC_STELLAR_NETWORK", "mainnet");
+    useWalletStore.setState({ network: "testnet" });
+    const connectWallet = vi.fn();
+    vi.mocked(useWallet).mockReturnValue({
+      connected: true,
+      loading: false,
+      address: "GACR43ILX6H4PGAOO5QKSZLU4ZJMGT3E66EAUDPLM5J6YTP4Y3PSHWGBYZ",
+      error: null,
+      connectWallet,
+      disconnectWallet: vi.fn(),
+    } as any);
+
+    render(<WalletConnect />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Switch to Mainnet/i }),
+    );
+
+    await waitFor(() =>
+      expect(freighterApi.setNetwork).toHaveBeenCalledWith("PUBLIC"),
+    );
+    await waitFor(() => expect(connectWallet).toHaveBeenCalledOnce());
   });
 
   it("shows the unsupported-version warning when Freighter cannot switch networks", async () => {
