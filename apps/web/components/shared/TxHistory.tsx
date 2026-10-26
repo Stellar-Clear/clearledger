@@ -1,5 +1,6 @@
 "use client";
 
+import { formatDateTime } from "@/lib/format";
 import React, { useState } from "react";
 import {
   ExternalLink,
@@ -128,7 +129,7 @@ export function TxHistory({ address, poolOnly = false }: TxHistoryProps) {
                       {tx.type}
                     </span>
                     <span className="text-xs text-slate-500">
-                      {new Date(tx.timestamp * 1000).toLocaleString()}
+                      {formatDateTime(tx.timestamp)}
                     </span>
                   </div>
                 </div>

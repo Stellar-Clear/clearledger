@@ -1,5 +1,6 @@
 "use client";
 
+import { formatBps, formatDateTime } from "@/lib/format";
 import React from "react";
 import { PageLayout } from "@/components/shared/PageLayout";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
@@ -110,7 +111,7 @@ export default function AnalyticsClient() {
               label="Pool Utilization"
               value={
                 stats
-                  ? `${(stats.pool_utilization_bps / 100).toFixed(1)}%`
+                  ? formatBps(stats.pool_utilization_bps, 1)
                   : null
               }
               isLoading={isLoading}
@@ -120,7 +121,7 @@ export default function AnalyticsClient() {
             <StatTile
               label="Average Yield"
               value={
-                stats ? `${(stats.average_yield_bps / 100).toFixed(2)}%` : null
+                stats ? formatBps(stats.average_yield_bps) : null
               }
               isLoading={isLoading}
               hasError={hasError}
@@ -218,7 +219,7 @@ export default function AnalyticsClient() {
                         {event.event_type}
                       </span>
                       <span className="text-slate-500">
-                        Ledger {event.ledger} · {new Date(event.ledger_closed_at * 1000).toLocaleString()}
+                        Ledger {event.ledger} · {formatDateTime(event.ledger_closed_at)}
                       </span>
                     </div>
                     <div className="flex shrink-0 items-center gap-3">

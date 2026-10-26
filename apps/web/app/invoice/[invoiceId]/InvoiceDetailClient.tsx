@@ -1,5 +1,6 @@
 "use client";
 
+import { formatBps, formatDate } from "@/lib/format";
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -9,6 +10,7 @@ import { useInvoiceDetailActions } from "@/hooks/useInvoiceDetailActions";
 import { useWalletStore } from "@/store/wallet";
 import { InvoiceStatus } from "@/components/invoice/InvoiceStatus";
 import { InvoiceStatusTimeline } from "@/components/invoice/InvoiceStatusTimeline";
+import { DeliveryConfirmationStatus } from "@/components/invoice/DeliveryConfirmationStatus";
 import { AttestationStatus } from "@/components/invoice/AttestationStatus";
 import { Button } from "@/components/ui/button";
 import { TransactionPending } from "@/components/shared/TransactionPending";
@@ -240,6 +242,10 @@ export default function InvoiceDetailClient({
         </div>
 
         <div className="bg-card border border-border rounded-lg p-5 space-y-4">
+          <DeliveryConfirmationStatus invoice={invoice} />
+        </div>
+
+        <div className="bg-card border border-border rounded-lg p-5 space-y-4">
           <AttestationStatus invoice={invoice} />
         </div>
 
@@ -344,7 +350,7 @@ export default function InvoiceDetailClient({
                 <div className="flex flex-wrap justify-between gap-2">
                   <span className="text-slate-500">Maturity Date:</span>
                   <span className="text-slate-300 font-bold">
-                    {new Date(invoice.dueDate * 1000).toLocaleDateString()}
+                    {formatDate(invoice.dueDate)}
                   </span>
                 </div>
                 <div className="flex flex-wrap justify-between gap-2">
@@ -361,7 +367,7 @@ export default function InvoiceDetailClient({
                   <span className="text-slate-500">Discount Rate:</span>
                   <span className="text-primary font-bold">
                     {invoice.discountBps > 0
-                      ? `${(invoice.discountBps / 100).toFixed(2)}%`
+                      ? formatBps(invoice.discountBps)
                       : "—"}
                   </span>
                 </div>

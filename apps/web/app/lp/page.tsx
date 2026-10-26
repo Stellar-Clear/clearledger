@@ -18,6 +18,7 @@ import { PoolPerformanceChart } from "@/components/shared/PoolPerformanceChart";
 import { useInvoiceList } from "@/hooks/useInvoices";
 import { ExternalLink } from "lucide-react";
 import { TxHistory } from "@/components/shared/TxHistory";
+import { explainPoolLiquidity } from "@/lib/poolLiquidity";
 
 const poolContractID = process.env.NEXT_PUBLIC_POOL_CONTRACT_ID || "";
 const explorerNetwork = ["mainnet", "public"].includes(
@@ -277,6 +278,12 @@ export default function LPDashboard() {
     position?.shares && previewShares > position.shares,
   );
   const exceedsLiquidity = estimatedPositionValue > availableLiquidity;
+  const liquidity = explainPoolLiquidity(typedStats ?? {});
+  const liquidityExplanation = {
+    available: "Unallocated liquidity is USDC not yet funded into invoices. It is the most you can withdraw from the pool right now.",
+    "fully-committed": "All deposited liquidity is committed to active invoices, so withdrawals are unavailable until those invoices are repaid.",
+    empty: "The pool has no deposits yet, so there is nothing to withdraw.",
+  }[liquidity.state];
 
   return (
     <PageLayout>
@@ -572,6 +579,13 @@ export default function LPDashboard() {
                 <span className="font-mono text-white">
                   {formatShareValue(availableLiquidity)}
                 </span>
+              </div>
+              <div className="space-y-1 border-t border-border/40 pt-2 text-[10px] text-slate-400">
+                <p>
+                  Deposits {formatShareValue(liquidity.deposits)} USDC · Committed to active invoices{" "}
+                  {formatShareValue(liquidity.committed)} USDC · Unallocated {formatShareValue(liquidity.available)} USDC
+                </p>
+                <p>{liquidityExplanation}</p>
               </div>
               <p className="pt-1 text-[10px] text-slate-500">
                 Estimate uses the latest indexed position and pool snapshot; the confirmed amount may change.
