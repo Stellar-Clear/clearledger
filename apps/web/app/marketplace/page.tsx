@@ -15,20 +15,30 @@ import { useWalletStore } from "@/store/wallet";
 import { useProfile } from "@/hooks/useProfile";
 import { Invoice } from "@/types";
 import { formatAmount } from "@/lib/assets";
-import { sortInvoicesDeterministically, type InvoiceSortKey, type SortDirection } from "@/lib/invoiceSort";
+import {
+  sortInvoicesDeterministically,
+  type InvoiceSortKey,
+  type SortDirection,
+} from "@/lib/invoiceSort";
 import { downloadInvoicesCSV } from "@/lib/invoiceCsv";
-import { getRecentEvents } from "@/lib/api";
-import { ShieldAlert, RotateCcw, Save, Trash2, Menu, Download } from "lucide-react";
+import { getInvoices, getRecentEvents } from "@/lib/api";
+import {
+  DEFAULT_MARKETPLACE_FILTERS,
+  filterInvoicesByDueDateAndAsset,
+  parseMarketplaceUrl,
+  type MarketplaceFilters,
+} from "@/lib/marketplaceFilters";
+import {
+  ShieldAlert,
+  RotateCcw,
+  Save,
+  Trash2,
+  Menu,
+  Download,
+} from "lucide-react";
 
 const MARKETPLACE_FILTERS_KEY = "clearledger:marketplace:filters";
 const MARKETPLACE_PRESETS_KEY = "clearledger:marketplace:presets";
-
-interface MarketplaceFilters {
-  statusFilter: string;
-  minAmount: string;
-  maxAmount: string;
-  maxDiscount: string;
-}
 
 interface FilterPreset {
   name: string;
@@ -42,10 +52,8 @@ function readFiltersFromStorage(): MarketplaceFilters | null {
     if (!stored) return null;
     const parsed = JSON.parse(stored);
     return {
-      statusFilter: parsed.statusFilter ?? "Listed",
-      minAmount: parsed.minAmount ?? "",
-      maxAmount: parsed.maxAmount ?? "",
-      maxDiscount: parsed.maxDiscount ?? "500",
+      ...DEFAULT_MARKETPLACE_FILTERS,
+      ...parsed,
     };
   } catch {
     return null;
@@ -100,49 +108,137 @@ export default function Marketplace() {
   const role = useWalletStore((s) => s.role);
   const { isVerified } = useProfile();
   const { stats, isStatsLoading } = usePool();
+  const [invoicePage, setInvoicePage] = useState(1);
+  const [invoiceLimit, setInvoiceLimit] = useState(20);
   const indexerFreshness = useQuery({
     queryKey: ["marketplace", "indexer-freshness"],
     queryFn: () => getRecentEvents(1),
     refetchInterval: 30_000,
     staleTime: 15_000,
   });
-  const [invoicePage, setInvoicePage] = useState(1);
-  const [invoiceLimit, setInvoiceLimit] = useState(20);
   const [showPresetsDropdown, setShowPresetsDropdown] = useState(false);
   const [showCompareModal, setShowCompareModal] = useState(false);
   const [newPresetName, setNewPresetName] = useState("");
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
   const [editingPresetName, setEditingPresetName] = useState("");
 
-  // Filter States - initialized from localStorage
-  const [statusFilter, setStatusFilter] = useState<string>(() => {
-    const stored = readFiltersFromStorage();
-    return stored?.statusFilter ?? "Listed";
-  });
-  const [minAmount, setMinAmount] = useState<string>(() => {
-    const stored = readFiltersFromStorage();
-    return stored?.minAmount ?? "";
-  });
-  const [maxAmount, setMaxAmount] = useState<string>(() => {
-    const stored = readFiltersFromStorage();
-    return stored?.maxAmount ?? "";
-  });
+  // URL values take precedence so filtered views can be shared and bookmarked.
+  const [initialFilters] = useState(() =>
+    parseMarketplaceUrl(
+      typeof window === "undefined" ? "" : window.location.search,
+      readFiltersFromStorage() ?? DEFAULT_MARKETPLACE_FILTERS,
+    ),
+  );
+  const [statusFilter, setStatusFilter] = useState(initialFilters.statusFilter);
+  const [minAmount, setMinAmount] = useState(initialFilters.minAmount);
+  const [maxAmount, setMaxAmount] = useState(initialFilters.maxAmount);
+  const [dueFrom, setDueFrom] = useState(initialFilters.dueFrom);
+  const [dueTo, setDueTo] = useState(initialFilters.dueTo);
+  const [assetFilter, setAssetFilter] = useState<MarketplaceFilters["asset"]>(
+    initialFilters.asset,
+  );
   const [sortKey, setSortKey] = useState<InvoiceSortKey>("faceValue");
   const [sortDir, setSortDir] = useState<SortDirection>("desc");
-  const [maxDiscount, setMaxDiscount] = useState<string>(() => {
-    const stored = readFiltersFromStorage();
-    return stored?.maxDiscount ?? "500";
-  });
+  const [maxDiscount, setMaxDiscount] = useState(initialFilters.maxDiscount);
 
-  // Persist filters to localStorage on change
+  // Keep local preferences and the shareable URL in sync.
   useEffect(() => {
-    writeFiltersToStorage({ statusFilter, minAmount, maxAmount, maxDiscount });
-  }, [statusFilter, minAmount, maxAmount, maxDiscount]);
+    const filters = {
+      statusFilter,
+      minAmount,
+      maxAmount,
+      maxDiscount,
+      dueFrom,
+      dueTo,
+      asset: assetFilter,
+    };
+    writeFiltersToStorage(filters);
+    const url = new URL(window.location.href);
+    const values: Record<string, string> = {
+      status: statusFilter,
+      dueFrom,
+      dueTo,
+      asset: assetFilter,
+      minAmount,
+      maxAmount,
+      maxDiscount,
+    };
+    for (const [key, value] of Object.entries(values)) {
+      if (
+        !value ||
+        (key === "status" && value === "Listed") ||
+        (key === "asset" && value === "ALL") ||
+        (key === "maxDiscount" && value === "500")
+      ) {
+        url.searchParams.delete(key);
+      } else {
+        url.searchParams.set(key, value);
+      }
+    }
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, [
+    statusFilter,
+    minAmount,
+    maxAmount,
+    maxDiscount,
+    dueFrom,
+    dueTo,
+    assetFilter,
+  ]);
+
+  const hasClientFilters = Boolean(
+    minAmount ||
+      maxAmount ||
+      maxDiscount !== "500" ||
+      dueFrom ||
+      dueTo ||
+      assetFilter !== "ALL",
+  );
 
   const { invoices, isLoading, total, totalPages } = useInvoiceList({
     status: statusFilter === "ALL" ? undefined : statusFilter,
-    page: invoicePage,
-    limit: invoiceLimit,
+    page: hasClientFilters ? 1 : invoicePage,
+    limit: hasClientFilters ? 100 : invoiceLimit,
+  });
+  const allMatchingInvoices = useQuery({
+    queryKey: ["marketplace", "all-invoices", statusFilter],
+    enabled: hasClientFilters,
+    queryFn: async ({ signal }) => {
+      const firstPage = await getInvoices(
+        {
+          status: statusFilter === "ALL" ? undefined : statusFilter,
+          page: 1,
+          limit: 100,
+        },
+        signal,
+      );
+      const results = [...firstPage.data];
+      for (let start = 2; start <= firstPage.totalPages; start += 5) {
+        const pages = Array.from(
+          { length: Math.min(5, firstPage.totalPages - start + 1) },
+          (_, index) => start + index,
+        );
+        const nextPages = await Promise.all(
+          pages.map((page) =>
+            getInvoices(
+              {
+                status: statusFilter === "ALL" ? undefined : statusFilter,
+                page,
+                limit: 100,
+              },
+              signal,
+            ),
+          ),
+        );
+        for (const page of nextPages) results.push(...page.data);
+      }
+      return results;
+    },
+    staleTime: 15_000,
   });
 
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
@@ -154,11 +250,26 @@ export default function Marketplace() {
   useEffect(() => {
     setInvoicePage(1);
     setSelectedInvoice(null);
-  }, [statusFilter, minAmount, maxAmount, maxDiscount]);
+  }, [
+    statusFilter,
+    minAmount,
+    maxAmount,
+    maxDiscount,
+    dueFrom,
+    dueTo,
+    assetFilter,
+  ]);
 
   // Filter and Sort Invoices
   const filteredAndSortedInvoices = useMemo(() => {
-    let result = [...invoices];
+    let result = filterInvoicesByDueDateAndAsset(
+      hasClientFilters ? (allMatchingInvoices.data ?? []) : invoices,
+      {
+        dueFrom,
+        dueTo,
+        asset: assetFilter,
+      },
+    );
 
     // Filter by Min Amount
     if (minAmount) {
@@ -179,7 +290,34 @@ export default function Marketplace() {
     }
 
     return sortInvoicesDeterministically(result, sortKey, sortDir);
-  }, [invoices, minAmount, maxAmount, maxDiscount, sortKey, sortDir]);
+  }, [
+    invoices,
+    allMatchingInvoices.data,
+    hasClientFilters,
+    minAmount,
+    maxAmount,
+    maxDiscount,
+    dueFrom,
+    dueTo,
+    assetFilter,
+    sortKey,
+    sortDir,
+  ]);
+
+  const pageInvoices = hasClientFilters
+    ? filteredAndSortedInvoices.slice(
+        (invoicePage - 1) * invoiceLimit,
+        invoicePage * invoiceLimit,
+      )
+    : filteredAndSortedInvoices;
+  const invoiceResultCount = hasClientFilters
+    ? filteredAndSortedInvoices.length
+    : total;
+  const invoiceResultPages = hasClientFilters
+    ? Math.max(1, Math.ceil(filteredAndSortedInvoices.length / invoiceLimit))
+    : totalPages;
+  const isInvoiceListLoading =
+    isLoading || (hasClientFilters && allMatchingInvoices.isLoading);
 
   const handlePageChange = (page: number) => {
     setInvoicePage(page);
@@ -211,6 +349,9 @@ export default function Marketplace() {
     setMinAmount(preset.filters.minAmount);
     setMaxAmount(preset.filters.maxAmount);
     setMaxDiscount(preset.filters.maxDiscount);
+    setDueFrom(preset.filters.dueFrom ?? "");
+    setDueTo(preset.filters.dueTo ?? "");
+    setAssetFilter(preset.filters.asset ?? "ALL");
     setShowPresetsDropdown(false);
   };
 
@@ -223,7 +364,15 @@ export default function Marketplace() {
     }
     const newPreset: FilterPreset = {
       name: newPresetName.trim(),
-      filters: { statusFilter, minAmount, maxAmount, maxDiscount },
+      filters: {
+        statusFilter,
+        minAmount,
+        maxAmount,
+        maxDiscount,
+        dueFrom,
+        dueTo,
+        asset: assetFilter,
+      },
       createdAt: Date.now(),
     };
     setPresets([...presets, newPreset]);
@@ -289,7 +438,10 @@ export default function Marketplace() {
               <p className="text-slate-500 text-xs font-mono mt-1">
                 {t("header.description")}
               </p>
-              <p className="mt-2 text-[10px] font-mono text-slate-500" aria-live="polite">
+              <p
+                className="mt-2 text-[10px] font-mono text-slate-500"
+                aria-live="polite"
+              >
                 {indexerFreshness.isFetching
                   ? "Refreshing indexed data…"
                   : indexerFreshness.data?.[0]
@@ -339,7 +491,7 @@ export default function Marketplace() {
         )}
 
         {/* Filter bar */}
-        <div className="bg-[#0d131a] border border-border rounded-lg p-4 grid grid-cols-1 md:grid-cols-5 gap-4 font-mono text-xs items-end">
+        <div className="bg-[#0d131a] border border-border rounded-lg p-4 grid grid-cols-1 md:grid-cols-4 xl:grid-cols-7 gap-4 font-mono text-xs items-end">
           <div className="space-y-1">
             <span className="text-[10px] text-slate-500 font-bold uppercase">
               {t("filters.status.label")}
@@ -374,6 +526,62 @@ export default function Marketplace() {
               <option value="Defaulted">
                 {t("filters.status.options.defaulted")}
               </option>
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="marketplace-due-from"
+              className="text-[10px] text-slate-500 font-bold uppercase"
+            >
+              {t("filters.dueFrom")}
+            </label>
+            <input
+              id="marketplace-due-from"
+              type="date"
+              value={dueFrom}
+              onChange={(event) => setDueFrom(event.target.value)}
+              className="w-full bg-[#080c10] border border-border rounded px-3 py-1.5 text-white focus:outline-none focus:border-primary"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="marketplace-due-to"
+              className="text-[10px] text-slate-500 font-bold uppercase"
+            >
+              {t("filters.dueTo")}
+            </label>
+            <input
+              id="marketplace-due-to"
+              type="date"
+              min={dueFrom || undefined}
+              value={dueTo}
+              onChange={(event) => setDueTo(event.target.value)}
+              className="w-full bg-[#080c10] border border-border rounded px-3 py-1.5 text-white focus:outline-none focus:border-primary"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="marketplace-asset"
+              className="text-[10px] text-slate-500 font-bold uppercase"
+            >
+              {t("filters.asset.label")}
+            </label>
+            <select
+              id="marketplace-asset"
+              value={assetFilter}
+              onChange={(event) =>
+                setAssetFilter(
+                  event.target.value as MarketplaceFilters["asset"],
+                )
+              }
+              className="w-full bg-[#080c10] border border-border rounded px-3 py-1.5 text-white focus:outline-none focus:border-primary"
+            >
+              <option value="ALL">{t("filters.asset.all")}</option>
+              <option value="USDC">USDC</option>
+              <option value="XLM">XLM</option>
             </select>
           </div>
 
@@ -436,7 +644,10 @@ export default function Marketplace() {
           </div>
 
           <div className="space-y-1">
-            <label htmlFor="marketplace-sort" className="text-[10px] text-slate-500 font-bold uppercase">
+            <label
+              htmlFor="marketplace-sort"
+              className="text-[10px] text-slate-500 font-bold uppercase"
+            >
               Sort this page by
             </label>
             <div className="flex gap-2">
@@ -461,7 +672,8 @@ export default function Marketplace() {
               </select>
             </div>
             <p className="text-[10px] text-slate-500">
-              Sorts the invoices loaded on this page. Discount is stored in basis points (100 bps = 1%).
+              Sorts the invoices loaded on this page. Discount is stored in
+              basis points (100 bps = 1%).
             </p>
           </div>
 
@@ -616,7 +828,9 @@ export default function Marketplace() {
         </div>
 
         <p className="mb-4 rounded border border-slate-700 bg-slate-900/40 p-3 text-xs text-slate-400">
-          Issuers must complete profile verification before listing. Buyers can fund listed invoices after connecting a wallet; status changes appear after Testnet events are indexed.
+          Issuers must complete profile verification before listing. Buyers can
+          fund listed invoices after connecting a wallet; status changes appear
+          after Testnet events are indexed.
         </p>
 
         {/* Marketplace Contents */}
@@ -626,11 +840,11 @@ export default function Marketplace() {
             <div className="flex justify-between items-center gap-3">
               <h2 className="text-sm font-bold font-mono tracking-wider uppercase text-white">
                 {t("invoices.title", {
-                  count: filteredAndSortedInvoices.length,
+                  count: invoiceResultCount,
                 })}
               </h2>
               <div className="flex items-center gap-3">
-                {isLoading && (
+                {isInvoiceListLoading && (
                   <span className="text-xs text-primary animate-pulse font-mono uppercase">
                     {t("syncing")}
                   </span>
@@ -650,7 +864,7 @@ export default function Marketplace() {
             {/* Invoices Table */}
             <ErrorBoundary context="InvoiceList">
               <InvoiceTable
-                invoices={filteredAndSortedInvoices}
+                invoices={pageInvoices}
                 onSelectInvoice={handleSelectInvoice}
                 activeId={selectedInvoice?.id}
                 role={role}
@@ -658,9 +872,7 @@ export default function Marketplace() {
                 selectedIds={selectedInvoiceIds}
                 onSelectionChange={handleSelectionChange}
                 emptyStateTitle={t("invoices.emptyState.title")}
-                emptyStateDescription={
-                  `No invoices match status ${statusFilter === "ALL" ? "any" : statusFilter}, amount ${minAmount || "any"}–${maxAmount || "any"} USDC, and maximum discount ${maxDiscount || "any"} bps. Clear the filters to see eligible invoices.`
-                }
+                emptyStateDescription={`No invoices match the selected status, due-date range, funding asset, amount, and discount filters.`}
                 emptyStateAction={{
                   label: t("invoices.emptyState.action"),
                   onClick: () => {
@@ -668,6 +880,9 @@ export default function Marketplace() {
                     setMinAmount("");
                     setMaxAmount("");
                     setMaxDiscount("500");
+                    setDueFrom("");
+                    setDueTo("");
+                    setAssetFilter("ALL");
                     setSelectedInvoice(null);
                     setInvoicePage(1);
                     writeFiltersToStorage({
@@ -675,14 +890,17 @@ export default function Marketplace() {
                       minAmount: "",
                       maxAmount: "",
                       maxDiscount: "500",
+                      dueFrom: "",
+                      dueTo: "",
+                      asset: "ALL",
                     });
                   },
                 }}
                 pagination={{
                   page: invoicePage,
                   limit: invoiceLimit,
-                  total,
-                  totalPages,
+                  total: invoiceResultCount,
+                  totalPages: invoiceResultPages,
                   onPageChange: handlePageChange,
                   onLimitChange: handleLimitChange,
                 }}
@@ -789,7 +1007,10 @@ export default function Marketplace() {
                     )}
 
                   {!connected && (
-                    <p role="status" className="text-xs font-mono text-slate-400">
+                    <p
+                      role="status"
+                      className="text-xs font-mono text-slate-400"
+                    >
                       {t("console.connectToAct")}
                     </p>
                   )}

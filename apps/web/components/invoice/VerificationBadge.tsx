@@ -19,19 +19,19 @@ const stateConfig: Record<
   unverified: {
     bg: "bg-slate-500/5",
     border: "border-slate-500/20",
-    text: "text-slate-400",
+    text: "text-slate-100",
     label: "Unverified",
   },
   verified: {
     bg: "bg-emerald-500/5",
     border: "border-emerald-500/25",
-    text: "text-emerald-400",
+    text: "text-emerald-100",
     label: "Verified",
   },
   failed: {
     bg: "bg-rose-500/5",
     border: "border-rose-500/25",
-    text: "text-rose-400",
+    text: "text-rose-100",
     label: "Verification failed",
   },
 };

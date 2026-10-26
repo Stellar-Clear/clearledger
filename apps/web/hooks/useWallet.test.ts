@@ -1,5 +1,6 @@
 import { renderHook, act } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { getNetworkDetails } from "@stellar/freighter-api";
 import { useWallet } from "./useWallet";
 import { useWalletStore } from "@/store/wallet";
 import {
@@ -45,6 +46,8 @@ const CHANGED_ADDRESS = Keypair.fromRawEd25519Seed(
 ).publicKey();
 
 describe("useWallet", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   beforeEach(() => {
     vi.clearAllMocks();
     useWalletStore.getState().disconnect();
@@ -82,6 +85,38 @@ describe("useWallet", () => {
     expect(result.current.network).toBe("testnet");
     expect(result.current.loading).toBe(false);
     expect(result.current.error).toBeNull();
+  });
+
+  it("connects when Freighter PUBLIC matches the app Mainnet configuration", async () => {
+    vi.stubEnv("NEXT_PUBLIC_STELLAR_NETWORK", "mainnet");
+    vi.mocked(connectFreighter).mockResolvedValue("G12345");
+    vi.mocked(getNetworkDetails).mockResolvedValue({
+      network: "PUBLIC",
+    } as any);
+
+    const { result } = renderHook(() => useWallet());
+    await act(async () => result.current.connectWallet());
+
+    expect(result.current.connected).toBe(true);
+    expect(result.current.network).toBe("mainnet");
+    expect(useWalletStore.getState().network).toBe("mainnet");
+  });
+
+  it("explains the actual wallet and app networks on a mismatch", async () => {
+    vi.stubEnv("NEXT_PUBLIC_STELLAR_NETWORK", "mainnet");
+    vi.mocked(connectFreighter).mockResolvedValue("G12345");
+    vi.mocked(getNetworkDetails).mockResolvedValue({
+      network: "TESTNET",
+    } as any);
+
+    const { result } = renderHook(() => useWallet());
+    await act(async () => result.current.connectWallet());
+
+    expect(result.current.connected).toBe(false);
+    expect(result.current.error).toMatch(
+      /wallet is on Testnet, but this app is configured for Mainnet/i,
+    );
+    expect(result.current.errorCode).toBe("wrong_network");
   });
 
   it("connectWallet shows loading during connection", async () => {
@@ -435,7 +470,7 @@ describe("useWallet Freighter change watching (#873)", () => {
       });
     });
 
-    expect(useWalletStore.getState().network).toBe("public");
+    expect(useWalletStore.getState().network).toBe("mainnet");
     expect(result.current.error).toMatch(/wrong network/i);
     expect(result.current.errorCode).toBe("wrong_network");
   });

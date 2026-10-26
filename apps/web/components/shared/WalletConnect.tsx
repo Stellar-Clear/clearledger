@@ -17,6 +17,12 @@ import {
 } from "lucide-react";
 import { truncateAddress } from "@/lib/format";
 import { getErrorMessage } from "@/lib/errors";
+import {
+  freighterNetworkName,
+  getConfiguredStellarNetwork,
+  normalizeStellarNetwork,
+  stellarNetworkLabel,
+} from "@/lib/stellarNetwork";
 
 interface FreighterNetworkApi {
   setNetwork?: (network: string) => Promise<unknown>;
@@ -34,6 +40,9 @@ export function WalletConnect() {
   } = useWallet();
 
   const network = useWalletStore((s) => s.network);
+  const appNetwork = getConfiguredStellarNetwork();
+  const appNetworkLabel = stellarNetworkLabel(appNetwork);
+  const normalizedWalletNetwork = normalizeStellarNetwork(network);
   const install = useFreighterInstallStatus();
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
@@ -56,13 +65,14 @@ export function WalletConnect() {
     }
   };
 
-  const handleSwitchToTestnet = async () => {
+  const handleSwitchToAppNetwork = async () => {
     setSwitchingNetwork(true);
     setNetworkSwitchError(null);
 
     try {
-      const freighter =
-        (await import("@stellar/freighter-api")) as unknown as FreighterNetworkApi;
+      const freighter = (await import(
+        "@stellar/freighter-api"
+      )) as unknown as FreighterNetworkApi;
 
       if (typeof freighter.setNetwork !== "function") {
         throw new Error(
@@ -70,7 +80,9 @@ export function WalletConnect() {
         );
       }
 
-      const response = await freighter.setNetwork("TESTNET");
+      const response = await freighter.setNetwork(
+        freighterNetworkName(appNetwork),
+      );
       if (
         response &&
         typeof response === "object" &&
@@ -101,59 +113,82 @@ export function WalletConnect() {
 
   return (
     <div className="flex flex-col gap-2 md:flex-row md:items-center">
-      {/* Network Badge */}
-      {connected && (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            {network === "testnet" ? (
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {connected &&
+            normalizedWalletNetwork &&
+            (normalizedWalletNetwork === "testnet" ? (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-amber-500/10 border border-amber-500/20 text-amber-400 font-mono">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
                 Testnet
               </span>
-            ) : network === "mainnet" ? (
+            ) : normalizedWalletNetwork === "mainnet" ? (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 Mainnet
               </span>
             ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs border-amber-500/30 text-amber-500 hover:bg-amber-500/10 rounded-md font-mono"
-                onClick={handleSwitchToTestnet}
-                disabled={switchingNetwork}
-              >
-                {switchingNetwork && (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                )}
-                {switchingNetwork ? "SWITCHING..." : "Switch to Testnet"}
-              </Button>
-            )}
-          </div>
-
-          {networkSwitchError && (
-            <div className="flex flex-col gap-1 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-md px-2.5 py-2">
-              <span className="flex items-start gap-1.5">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>
-                  Open Freighter, switch its network to Testnet, then reconnect
-                  your wallet.
-                </span>
+              <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 font-mono text-xs text-amber-200">
+                {stellarNetworkLabel(normalizedWalletNetwork)}
               </span>
-              {networkSwitchError && <span>{networkSwitchError}</span>}
-              <a
-                href="https://www.freighter.app/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 font-semibold hover:underline"
-              >
-                <span>Open Freighter</span>
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            </div>
-          )}
+            ))}
+          <span
+            aria-label={`App network: ${appNetworkLabel}`}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-500/30 bg-slate-500/10 px-2.5 py-1 font-mono text-xs text-slate-200"
+          >
+            App: {appNetworkLabel}
+          </span>
         </div>
-      )}
+
+        {connected && normalizedWalletNetwork !== appNetwork && (
+          <div
+            role="alert"
+            className="flex flex-col gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-2 text-xs text-rose-100"
+          >
+            <span>
+              Network mismatch: wallet is on{" "}
+              {stellarNetworkLabel(normalizedWalletNetwork)}, but this app is
+              configured for {appNetworkLabel}.
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-fit border-rose-300/40 text-rose-100 hover:bg-rose-500/10"
+              onClick={handleSwitchToAppNetwork}
+              disabled={switchingNetwork}
+            >
+              {switchingNetwork && (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              )}
+              {switchingNetwork
+                ? "SWITCHING..."
+                : `Switch to ${appNetworkLabel}`}
+            </Button>
+          </div>
+        )}
+
+        {networkSwitchError && (
+          <div className="flex flex-col gap-1 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-md px-2.5 py-2">
+            <span className="flex items-start gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>
+                Open Freighter, switch its network to {appNetworkLabel}, then
+                reconnect your wallet.
+              </span>
+            </span>
+            {networkSwitchError && <span>{networkSwitchError}</span>}
+            <a
+              href="https://www.freighter.app/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-semibold hover:underline"
+            >
+              <span>Open Freighter</span>
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </div>
+        )}
+      </div>
 
       <div className="flex items-center gap-2">
         {connected && address ? (
