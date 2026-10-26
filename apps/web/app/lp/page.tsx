@@ -19,6 +19,7 @@ import { useInvoiceList } from "@/hooks/useInvoices";
 import { ExternalLink } from "lucide-react";
 import { TxHistory } from "@/components/shared/TxHistory";
 import { explainPoolLiquidity } from "@/lib/poolLiquidity";
+import { InvoiceStatus } from "@/components/invoice/InvoiceStatus";
 
 const poolContractID = process.env.NEXT_PUBLIC_POOL_CONTRACT_ID || "";
 const explorerNetwork = ["mainnet", "public"].includes(
@@ -407,7 +408,7 @@ export default function LPDashboard() {
                     <a href={`/invoice/${invoice.id}`} className="truncate font-mono text-primary hover:underline">
                       {invoice.id.slice(0, 10)}…
                     </a>
-                    <span className="text-slate-400">{invoice.status}</span>
+                    <InvoiceStatus status={invoice.status} />
                     <span className="shrink-0 font-mono text-white">
                       {formatShareValue(invoice.fundedAmount)}
                     </span>
