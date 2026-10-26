@@ -38,4 +38,22 @@ describe("InvoiceStatus", () => {
     render(<InvoiceStatus status="Defaulted" />);
     expect(screen.getByText(/Defaulted/i)).toBeInTheDocument();
   });
+
+  it("uses high contrast text for every lifecycle state", () => {
+    const statuses = [
+      ["Created", "text-slate-100"],
+      ["Listed", "text-teal-100"],
+      ["Funded", "text-blue-100"],
+      ["Active", "text-indigo-100"],
+      ["Confirmed", "text-sky-100"],
+      ["Repaid", "text-emerald-100"],
+      ["Defaulted", "text-amber-100"],
+    ] as const;
+
+    for (const [status, textClass] of statuses) {
+      const { unmount } = render(<InvoiceStatus status={status} />);
+      expect(screen.getByRole("status")).toHaveClass(textClass);
+      unmount();
+    }
+  });
 });
