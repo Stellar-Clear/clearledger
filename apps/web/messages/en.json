@@ -198,6 +198,12 @@
           "defaulted": "Defaulted"
         }
       },
+      "dueFrom": "Due date from",
+      "dueTo": "Due date to",
+      "asset": {
+        "label": "Funding Asset",
+        "all": "All Assets"
+      },
       "minValue": {
         "label": "Min Value",
         "placeholder": "e.g. 5000"
