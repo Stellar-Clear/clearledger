@@ -135,6 +135,11 @@ export function useInvoiceActions() {
     mutationFn: async ({ invoiceId }: { invoiceId: string }) => {
       if (!address) throw new Error("Wallet not connected");
       const client = await getPoolClient();
+      if (await client.getPauseState(address)) {
+        throw new Error(
+          "Pool is paused; invoice funding is unavailable until it is resumed",
+        );
+      }
       return client.fundInvoice(invoiceId, address);
     },
     onSuccess: () => {

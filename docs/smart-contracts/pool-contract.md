@@ -82,6 +82,17 @@ PoolStats {
 }
 ```
 
+### get_config_v1
+
+```rust
+get_config_v1(env: Env) -> PoolConfigV1
+```
+
+Returns the versioned pool configuration without authorization and remains
+available while paused. Its `paused` field reports the emergency circuit-breaker
+state. The web app reads this flag through `PoolClient.getPauseState()` and
+disables LP writes until the state is confirmed.
+
 ### get_utilization_rate
 
 ```rust

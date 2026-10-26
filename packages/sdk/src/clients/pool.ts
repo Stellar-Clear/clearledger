@@ -6,9 +6,23 @@ import {
 } from "@stellar/stellar-sdk";
 import { BaseContractClient } from "../base.js";
 import { LPPosition, PoolStats } from "../types/index.js";
-import { parsePoolStats, parseLPPosition } from "../types/schemas.js";
+import {
+  parsePoolStats,
+  parseLPPosition,
+  parsePoolPauseState,
+} from "../types/schemas.js";
 
 export class PoolClient extends BaseContractClient {
+  /**
+   * Reads the pool's emergency pause state through `get_config_v1`.
+   * The versioned config getter is permissionless and remains callable while paused.
+   */
+  async getPauseState(signerPublicKey: string): Promise<boolean> {
+    return this.readContract("get_config_v1", [], signerPublicKey, (value) =>
+      parsePoolPauseState(scValToNative(value)),
+    );
+  }
+
   /**
    * Initializes the pool contract with its admin address.
    * Side effect: stores the admin address on-chain. Can only be called once — a second call panics.

@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parsePoolStats } from "./schemas.js";
+import { parsePoolStats, parsePoolPauseState } from "./schemas.js";
 import type { PoolStats } from "./index.js";
 
 // Helper: build a minimal valid PoolStats plain object with all required fields.
@@ -119,6 +119,23 @@ describe("parsePoolStats — totalShares", () => {
     };
     expect(typeof stats.totalShares, "totalShares should be a bigint").toBe(
       "bigint",
+    );
+  });
+});
+
+describe("parsePoolPauseState", () => {
+  it.each([true, false])("parses the contract pause flag %s", (paused) => {
+    expect(parsePoolPauseState({ paused })).toBe(paused);
+  });
+
+  it("parses snake-case fields from a Soroban map", () => {
+    expect(parsePoolPauseState(new Map([["paused", true]]))).toBe(true);
+  });
+
+  it("rejects a missing or malformed pause flag", () => {
+    expect(() => parsePoolPauseState({})).toThrow(/boolean pause state/);
+    expect(() => parsePoolPauseState({ paused: "true" })).toThrow(
+      /boolean pause state/,
     );
   });
 });

@@ -213,6 +213,33 @@ describe("usePool", () => {
     expect(toast.showErrorToast).toHaveBeenCalled();
   });
 
+  it("does not submit a deposit when the pool is paused", async () => {
+    act(() => {
+      useWalletStore.getState().connect("G123", "testnet");
+    });
+    vi.mocked(useQuery).mockImplementation(
+      (options: any) =>
+        ({
+          data: options.queryKey[0] === "poolPauseState" ? true : null,
+          isLoading: false,
+          error: null,
+          refetch: vi.fn(),
+        }) as any,
+    );
+    const mockDeposit = vi.fn();
+    vi.mocked(PoolClient).mockImplementation(function () {
+      return { deposit: mockDeposit };
+    } as any);
+
+    const { result } = renderHook(() => usePool());
+    await expect(
+      act(async () => {
+        await result.current.deposit({ amount: 100n, asset: "USDC" });
+      }),
+    ).rejects.toThrow(/pool is paused/i);
+    expect(mockDeposit).not.toHaveBeenCalled();
+  });
+
   it("withdraw works", async () => {
     act(() => {
       useWalletStore.getState().connect("G123", "testnet");

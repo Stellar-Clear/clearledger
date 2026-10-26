@@ -20,6 +20,7 @@ import { ExternalLink } from "lucide-react";
 import { TxHistory } from "@/components/shared/TxHistory";
 import { explainPoolLiquidity } from "@/lib/poolLiquidity";
 import { InvoiceStatus } from "@/components/invoice/InvoiceStatus";
+import { PoolPauseNotice } from "@/components/shared/PoolPauseNotice";
 
 const poolContractID = process.env.NEXT_PUBLIC_POOL_CONTRACT_ID || "";
 const explorerNetwork = ["mainnet", "public"].includes(
@@ -86,6 +87,9 @@ export default function LPDashboard() {
     isWithdrawing,
     stats,
     isStatsLoading,
+    pauseState,
+    isPauseStateLoading,
+    pauseStateError,
     position,
     isPositionLoading,
   } = usePool();
@@ -107,7 +111,7 @@ export default function LPDashboard() {
 
   useEffect(() => {
     const amount = Number(depositAmount);
-    if (!address || !Number.isFinite(amount) || amount <= 0) {
+    if (pauseState !== false || !address || !Number.isFinite(amount) || amount <= 0) {
       setSimDetails(null);
       setSimError(null);
       return;
@@ -144,11 +148,11 @@ export default function LPDashboard() {
       active = false;
       clearTimeout(timer);
     };
-  }, [address, depositAmount]);
+  }, [address, depositAmount, pauseState]);
 
   useEffect(() => {
     const shares = Number(withdrawShares);
-    if (!address || !Number.isFinite(shares) || shares <= 0) {
+    if (pauseState !== false || !address || !Number.isFinite(shares) || shares <= 0) {
       setWithdrawSimDetails(null);
       setWithdrawSimError(null);
       setIsWithdrawSimulating(false);
@@ -187,7 +191,7 @@ export default function LPDashboard() {
       active = false;
       clearTimeout(timer);
     };
-  }, [address, withdrawShares]);
+  }, [address, withdrawShares, pauseState]);
 
   if (!connected) {
     return (
@@ -202,6 +206,7 @@ export default function LPDashboard() {
 
   const handleDeposit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (pauseState !== false) return;
     const amount = Number(depositAmount);
     if (!Number.isFinite(amount) || amount <= 0) return;
 
@@ -214,6 +219,7 @@ export default function LPDashboard() {
 
   const handleWithdraw = (event: React.FormEvent) => {
     event.preventDefault();
+    if (pauseState !== false) return;
     if (isWithdrawSimulating || withdrawSimError || !withdrawSimDetails) return;
     const shares = Number(withdrawShares);
     if (!Number.isFinite(shares) || shares <= 0) return;
@@ -298,6 +304,12 @@ export default function LPDashboard() {
             position.
           </p>
         </div>
+
+        <PoolPauseNotice
+          paused={pauseState}
+          isLoading={isPauseStateLoading}
+          error={pauseStateError}
+        />
 
         <section aria-labelledby="pool-overview-heading" className="space-y-3">
           <h2
@@ -531,7 +543,7 @@ export default function LPDashboard() {
             )}
             <button
               type="submit"
-              disabled={isDepositing}
+              disabled={isDepositing || pauseState !== false || isPauseStateLoading}
               className="rounded bg-primary px-4 py-2 font-semibold text-black disabled:opacity-50"
             >
               {isDepositing ? "Depositing..." : "Deposit USDC"}
@@ -603,6 +615,8 @@ export default function LPDashboard() {
               type="submit"
               disabled={
                 isWithdrawing ||
+                pauseState !== false ||
+                isPauseStateLoading ||
                 isWithdrawSimulating ||
                 !!withdrawSimError ||
                 !withdrawSimDetails ||
