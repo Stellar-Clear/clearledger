@@ -9,25 +9,34 @@ import {
 import { useBalances } from "./useBalances";
 import { createErrorHandler } from "@/lib/errors";
 import { isValidAccountAddress } from "@/lib/accountChange";
+import {
+  getConfiguredStellarNetwork,
+  normalizeStellarNetwork,
+  stellarNetworkLabel,
+} from "@/lib/stellarNetwork";
 
 const { captureError } = createErrorHandler("useWallet");
-const REQUIRED_NETWORK = "testnet";
-
-const EXPECTED_NETWORK = "testnet";
 const WRONG_NETWORK_ERROR_CODE = "wrong_network";
-const WRONG_NETWORK_ERROR_MESSAGE =
-  "Your Freighter wallet is connected to the wrong network. Please switch Freighter to Stellar Testnet and try again.";
+const WRONG_NETWORK_ERROR_PREFIX = "Freighter network mismatch:";
+
+function wrongNetworkErrorMessage(actual: string | null, expected: string) {
+  return `${WRONG_NETWORK_ERROR_PREFIX} wallet is on ${stellarNetworkLabel(actual)}, but this app is configured for ${stellarNetworkLabel(expected)}. This is the wrong network for this app; switch Freighter to ${stellarNetworkLabel(expected)} and reconnect.`;
+}
 
 interface FreighterNetworkDetails {
   network?: string;
 }
 
-async function validateFreighterNetwork(): Promise<void> {
+async function validateFreighterNetwork(
+  expectedNetwork: string,
+): Promise<void> {
   const details = (await getNetworkDetails()) as FreighterNetworkDetails;
-  const network = details.network?.trim().toLowerCase();
+  const network = normalizeStellarNetwork(details.network);
 
-  if (network !== EXPECTED_NETWORK) {
-    const error = new Error(WRONG_NETWORK_ERROR_MESSAGE) as Error & {
+  if (network !== expectedNetwork) {
+    const error = new Error(
+      wrongNetworkErrorMessage(network, expectedNetwork),
+    ) as Error & {
       code: string;
     };
     error.code = WRONG_NETWORK_ERROR_CODE;
@@ -39,8 +48,8 @@ async function validateFreighterNetwork(): Promise<void> {
  * Custom hook for managing Stellar wallet connection via Freighter.
  *
  * Provides wallet state and actions to connect or disconnect a Freighter wallet.
- * Connection defaults to the testnet network and verifies that Freighter is
- * actually configured for testnet before the wallet is stored as connected.
+ * Connection follows `NEXT_PUBLIC_STELLAR_NETWORK` and verifies that Freighter
+ * uses that same network before the wallet is stored as connected.
  * While connected, the hook also watches Freighter for account/network changes
  * (issue #873): the store is updated when the selected account changes, and a
  * wrong-network error is surfaced when Freighter leaves testnet.
@@ -69,6 +78,7 @@ export function useWallet() {
   const setAddress = useWalletStore((s) => s.setAddress);
   const setNetwork = useWalletStore((s) => s.setNetwork);
   const setToken = useWalletStore((s) => s.setToken);
+  const appNetwork = getConfiguredStellarNetwork();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -97,8 +107,8 @@ export function useWallet() {
 
     try {
       const addr = await connectFreighter();
-      await validateFreighterNetwork();
-      connect(addr, EXPECTED_NETWORK);
+      await validateFreighterNetwork(appNetwork);
+      connect(addr, appNetwork);
     } catch (err: unknown) {
       const appError = captureError(err);
       setError(appError.message);
@@ -149,17 +159,18 @@ export function useWallet() {
             .catch((err) => captureError(err));
         }
 
-        if (change.network && change.network !== state.network) {
-          setNetwork(change.network);
+        const activeNetwork = normalizeStellarNetwork(change.network);
+        if (activeNetwork && activeNetwork !== state.network) {
+          setNetwork(activeNetwork);
 
-          if (change.network !== EXPECTED_NETWORK) {
-            setError(WRONG_NETWORK_ERROR_MESSAGE);
+          if (activeNetwork !== appNetwork) {
+            setError(wrongNetworkErrorMessage(activeNetwork, appNetwork));
             setErrorCode(WRONG_NETWORK_ERROR_CODE);
           } else {
-            // Freighter is back on the expected network: clear the banner only
+            // Freighter is back on the app network: clear the banner only
             // if it is the one this watcher raised.
             setError((current) =>
-              current === WRONG_NETWORK_ERROR_MESSAGE ? null : current,
+              current?.startsWith(WRONG_NETWORK_ERROR_PREFIX) ? null : current,
             );
             setErrorCode((current) =>
               current === WRONG_NETWORK_ERROR_CODE ? null : current,
@@ -173,6 +184,7 @@ export function useWallet() {
     connected,
     address,
     network,
+    appNetwork,
     setAddress,
     setNetwork,
     setToken,
