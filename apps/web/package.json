@@ -20,7 +20,7 @@
     "@stellar/freighter-api": "^2.0.0",
     "@stellar/stellar-sdk": "^17.2.1",
     "@tanstack/react-query": "^5.104.5",
-    "@tanstack/react-virtual": "^3.14.8",
+    "@tanstack/react-virtual": "^3.14.23",
     "@clearledger/sdk": "workspace:*",
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
